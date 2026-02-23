@@ -11,6 +11,19 @@ const {
 } = require("../protocols/contextProtocols.js");
 const geminiService = require("./geminiService.js");
 const ollamaService = require("./ollamaService.js");
+const claudeService = require("./claudeService.js");
+const mistralService = require("./mistralService.js");
+const openaiService = require("./openaiService.js");
+
+function getLLMService(provider) {
+  switch (provider) {
+    case 'ollama': return ollamaService;
+    case 'claude': return claudeService;
+    case 'mistral': return mistralService;
+    case 'openai': return openaiService;
+    default: return geminiService;
+  }
+}
 
 function parseToolCall(responseText) {
   try {
@@ -30,10 +43,31 @@ function parseToolCall(responseText) {
     );
     // Fallback for non-JSON responses that contain the tool name
     if (typeof responseText === 'string' && responseText.toLowerCase().includes("generate_document")) {
-        console.log("[AgentService] Fallback: Detected 'generate_document' in text, creating tool call.");
-        return { tool_name: 'generate_document', parameters: {} }; // Parameters will be extracted from query later
+      console.log("[AgentService] Fallback: Detected 'generate_document' in text, creating tool call.");
+      return { tool_name: 'generate_document', parameters: {} }; // Parameters will be extracted from query later
     }
     return null;
+  }
+}
+
+/**
+ * Helper to call LLM with automatic failover on quota exhaustion.
+ */
+async function callLLMWithFailover(service, chatHistory, query, systemPrompt, options, requestContext) {
+  try {
+    return await service.generateContentWithHistory(chatHistory, query, systemPrompt, options);
+  } catch (error) {
+    if (error.isQuotaExceeded && options.provider !== 'ollama') {
+      console.warn(`[AgentService] Quota exceeded for ${options.provider}. Falling back to Ollama...`);
+      const ollamaOptions = {
+        ...options,
+        model: requestContext.ollamaModel,
+        ollamaUrl: requestContext.ollamaUrl,
+        provider: 'ollama'
+      };
+      return await ollamaService.generateContentWithHistory(chatHistory, query, systemPrompt, ollamaOptions);
+    }
+    throw error;
   }
 }
 
@@ -50,11 +84,12 @@ async function processAgenticRequest(
     apiKey,
   } = requestContext;
 
-  const llmService = llmProvider === "ollama" ? ollamaService : geminiService;
+  const llmService = getLLMService(llmProvider);
   const llmOptions = {
-    ...(llmProvider === "ollama" && { model: ollamaModel }),
+    model: requestContext.model || (llmProvider === "ollama" ? ollamaModel : undefined),
     apiKey: apiKey,
     ollamaUrl: ollamaUrl,
+    provider: llmProvider
   };
 
   const modelContext = createModelContext({ availableTools });
@@ -68,11 +103,13 @@ async function processAgenticRequest(
   );
 
   console.log(`[AgentService] Performing Router call using ${llmProvider}...`);
-  const routerResponseText = await llmService.generateContentWithHistory(
+  const routerResponseText = await callLLMWithFailover(
+    llmService,
     [],
     "Analyze the query and decide on an action.",
     routerSystemPrompt,
-    llmOptions
+    llmOptions,
+    requestContext
   );
   const toolCall = parseToolCall(routerResponseText);
 
@@ -130,11 +167,13 @@ async function processAgenticRequest(
 
     const finalSystemPrompt = CHAT_MAIN_SYSTEM_PROMPT();
     const userPrompt = userQuery;
-    const directAnswer = await llmService.generateContentWithHistory(
+    const directAnswer = await callLLMWithFailover(
+      llmService,
       chatHistory,
       userPrompt,
       finalSystemPrompt,
-      llmOptions
+      llmOptions,
+      requestContext
     );
 
     const thinkingMatch = directAnswer.match(
@@ -186,36 +225,45 @@ async function processAgenticRequest(
       `[AgentService] Performing Synthesizer call using ${llmProvider}...`
     );
 
+    // --- Step 4: Final Synthesis ---
+    // The agent reviews observations and produces a coherent final answer.
     const finalSystemPrompt = CHAT_MAIN_SYSTEM_PROMPT();
     const synthesizerUserQuery = createSynthesizerPrompt(
-      userQuery,
-      toolResult.toolOutput,
-      toolCall.tool_name
+      userQuery, // Changed from originalQuery to userQuery
+      toolResult.toolOutput, // Changed from allObservations.join('\n\n') to toolResult.toolOutput
+      toolCall.tool_name // Changed from 'standard_synthesis' to toolCall.tool_name
     );
 
-    const finalAnswerWithThinking = await llmService.generateContentWithHistory(
-      chatHistory,
-      synthesizerUserQuery,
-      finalSystemPrompt,
-      llmOptions
-    );
+    try {
+      const finalAnswerWithThinking = await callLLMWithFailover(
+        llmService,
+        chatHistory,
+        synthesizerUserQuery,
+        finalSystemPrompt,
+        llmOptions,
+        requestContext
+      );
 
-    const thinkingMatch = finalAnswerWithThinking.match(
-      /<thinking>([\s\S]*?)<\/thinking>/i
-    );
-    const thinking = thinkingMatch ? thinkingMatch[1].trim() : null;
-    const finalAnswer = thinking
-      ? finalAnswerWithThinking
-          .replace(/<thinking>[\s\S]*?<\/thinking>\s*/i, "")
-          .trim()
-      : finalAnswerWithThinking;
+      const thinkingMatch = finalAnswerWithThinking.match(/<thinking>([\s\S]*?)<\/thinking>/i);
+      const thinking = thinkingMatch ? thinkingMatch[1].trim() : null;
+      const finalAnswer = thinking ? finalAnswerWithThinking.replace(/<thinking>[\s\S]*?<\/thinking>\s*/i, '').trim() : finalAnswerWithThinking;
 
-    return {
-      finalAnswer,
-      thinking,
-      references: toolResult.references || [],
-      sourcePipeline: pipeline,
-    };
+      return {
+        finalAnswer,
+        thinking,
+        references: toolResult.references || [], // Changed from references to toolResult.references || []
+        sourcePipeline: pipeline // Changed from `agent-${llmOptions.provider}` to pipeline
+      };
+    } catch (synthError) {
+      console.error('[AgentService] Synthesizer failed completely:', synthError.message);
+      // RESILIENCE: Fallback to raw observations if synthesis fails
+      return {
+        finalAnswer: `> [!WARNING]\n> **AI Synthesis Failed**: I successfully executed tools but couldn't generate a summary (likely due to API limits).\n\n**Raw Tool Observations:**\n\n${toolResult.toolOutput}`, // Changed from allObservations.join('\n\n') to toolResult.toolOutput
+        thinking: "Synthesizer failed after tool execution.",
+        references: toolResult.references || [], // Changed from references to toolResult.references || []
+        sourcePipeline: `agent-fallback`
+      };
+    }
   } catch (error) {
     console.error(
       `[AgentService] Error executing tool '${toolCall.tool_name}':`,

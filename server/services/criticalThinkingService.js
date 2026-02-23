@@ -4,7 +4,7 @@ const ollamaService = require('./ollamaService');
 const { CRITICAL_THINKING_CUE_TEMPLATE } = require('../config/promptTemplates');
 
 const CUE_GEMINI_MODEL = process.env.PROMPT_COACH_GEMINI_MODEL || "gemini-1.5-flash";
-const CUE_OLLAMA_MODEL = process.env.OLLAMA_DEFAULT_MODEL || 'qwen2.5:14b-instruct';
+const CUE_OLLAMA_MODEL = process.env.OLLAMA_DEFAULT_MODEL || 'qwen2.5:3b-instruct';
 
 /**
  * Analyzes an AI's final answer to generate critical thinking cue prompts.

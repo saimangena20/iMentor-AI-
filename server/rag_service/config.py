@@ -86,7 +86,7 @@ LOGGING_FORMAT     = '%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(me
 
 # --- API Keys and Service URLs ---
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-GEMINI_MODEL_NAME = "gemini-2.0-flash" # Or your preferred Gemini model
+GEMINI_MODEL_NAME = os.getenv('GEMINI_MODEL_NAME', "gemini-flash-latest")
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 TURNITIN_API_URL = os.getenv('TURNITIN_API_URL')
 TURNITIN_API_KEY = os.getenv('TURNITIN_API_KEY')

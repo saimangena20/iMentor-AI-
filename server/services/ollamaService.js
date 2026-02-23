@@ -1,10 +1,10 @@
-//ollama service
-
 // server/services/ollamaService.js
 const axios = require('axios');
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
-const SERVER_DEFAULT_OLLAMA_URL = process.env.OLLAMA_API_BASE_URL || 'https://angels-himself-fixtures-unknown.trycloudflare.com';
-const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_DEFAULT_MODEL || 'qwen2.5:14b-instruct';
+const SERVER_DEFAULT_OLLAMA_URL = process.env.OLLAMA_API_BASE_URL || 'http://localhost:11434';
+const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_DEFAULT_MODEL || 'qwen2.5:3b-instruct';
 
 const DEFAULT_MAX_OUTPUT_TOKENS_OLLAMA_CHAT = 8192;
 const DEFAULT_MAX_OUTPUT_TOKENS_OLLAMA_KG = 8192;
@@ -26,7 +26,7 @@ function formatHistoryForOllamaChat(chatHistory) {
 //     const baseUrlToUse = options.ollamaUrl || SERVER_DEFAULT_OLLAMA_URL;
 //     const modelToUse = options.model || DEFAULT_OLLAMA_MODEL;
 //     const effectiveMaxOutputTokens = options.maxOutputTokens || DEFAULT_MAX_OUTPUT_TOKENS_OLLAMA_CHAT;
-    
+
 //     const headers = { 'Content-Type': 'application/json' };
 //     if (options.apiKey) {
 //         headers['Authorization'] = `Bearer ${options.apiKey}`;
@@ -59,7 +59,7 @@ function formatHistoryForOllamaChat(chatHistory) {
 //         console.log(`Ollama Service: Using /api/chat endpoint for conversation with history.`);
 //         const messages = formatHistoryForOllamaChat(chatHistory);
 //         messages.push({ role: 'user', content: currentUserQuery }); // Add the current query
-        
+
 //         requestPayload = {
 //             model: modelToUse,
 //             messages: messages,
@@ -84,7 +84,7 @@ function formatHistoryForOllamaChat(chatHistory) {
 //     // console.log(JSON.stringify(requestPayload, null, 2));
 //     // console.log("==================== END OLLAMA FINAL INPUT ====================\n");
 
-    
+
 //     try {
 //         const response = await axios.post(endpoint, requestPayload, { 
 //             headers,
@@ -102,7 +102,7 @@ function formatHistoryForOllamaChat(chatHistory) {
 //         }
 
 //         return responseText.trim();
-        
+
 //     } catch (error) {
 //         console.error("Ollama API Call Error:", error.message);
 //         const clientMessage = error.response?.data?.error || "Failed to get response from Ollama service.";
@@ -121,7 +121,7 @@ async function generateContentWithHistory(
 ) {
     const baseUrlToUse = options.ollamaUrl || SERVER_DEFAULT_OLLAMA_URL;
     const modelToUse = options.model || DEFAULT_OLLAMA_MODEL;
-    
+
     const headers = { 'Content-Type': 'application/json' };
     if (options.apiKey) {
         headers['Authorization'] = `Bearer ${options.apiKey}`;
@@ -151,9 +151,9 @@ async function generateContentWithHistory(
     };
 
     try {
-        const response = await axios.post(endpoint, requestPayload, { 
+        const response = await axios.post(endpoint, requestPayload, {
             headers,
-            timeout: 300000 
+            timeout: 300000
         });
 
         // The /api/chat endpoint has a consistent response structure.
@@ -162,7 +162,7 @@ async function generateContentWithHistory(
         } else {
             throw new Error("Ollama service returned an invalid or unrecognized response structure from /api/chat.");
         }
-        
+
     } catch (error) {
         console.error("Ollama API Call Error:", error.message);
         const clientMessage = error.response?.data?.error || "Failed to get response from Ollama service.";

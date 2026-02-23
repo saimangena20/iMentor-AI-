@@ -46,6 +46,9 @@ export const AppStateProvider = ({ children }) => {
     // Tutor Mode (Beta) feature flag - defaults to false
     const [tutorMode, setTutorMode] = useState(false);
 
+    // Deep Research Mode (Task 1.3.3) - defaults to false
+    const [deepResearchMode, setDeepResearchMode] = useState(false);
+
     const toggleTheme = () => {
         setThemeState(prevTheme => {
             const newTheme = prevTheme === 'light' ? 'dark' : 'light';
@@ -140,7 +143,8 @@ export const AppStateProvider = ({ children }) => {
             isAdminSessionActive, setIsAdminSessionActive,
             initialPromptForNewSession, setInitialPromptForNewSession,
             initialActivityForNewSession, setInitialActivityForNewSession,
-            tutorMode, setTutorMode
+            tutorMode, setTutorMode,
+            deepResearchMode, setDeepResearchMode
         }}>
             {children}
         </AppStateContext.Provider>

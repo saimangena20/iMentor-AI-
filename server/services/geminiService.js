@@ -94,9 +94,33 @@ async function generateContentWithHistory(
         if (error.message?.includes("404") || error.message?.includes("not found")) clientMessage = `Model ${MODEL_NAME} not found.`;
         if (error.status === 503) clientMessage = "AI Service Overloaded.";
 
+        // --- QUOTA FAILOVER FIX ---
+        // Specifically flag 429 (Too Many Requests) for the router to handle failover
+        const isQuotaError = error.status === 429 || error.message?.includes("429") || error.message?.includes("quota");
+
         const enhancedError = new Error(clientMessage);
         enhancedError.status = error.status || 500;
+        if (isQuotaError) enhancedError.isQuotaExceeded = true;
+
         throw enhancedError;
+    }
+}
+
+/**
+ * Generates an embedding for a text string.
+ */
+async function generateEmbedding(text, apiKey = null) {
+    const key = apiKey || FALLBACK_API_KEY;
+    if (!key) throw new Error("Gemini API key is missing for embeddings.");
+
+    try {
+        const genAI = new GoogleGenerativeAI(key);
+        const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+        const result = await model.embedContent(text);
+        return result.embedding.values;
+    } catch (error) {
+        console.error("Gemini Embedding Error:", error.message);
+        return null;
     }
 }
 
@@ -117,4 +141,5 @@ module.exports = {
     generateContentWithHistory,
     DEFAULT_MAX_OUTPUT_TOKENS_KG,
     fetchAvailableModels,
-}
+    generateEmbedding
+};

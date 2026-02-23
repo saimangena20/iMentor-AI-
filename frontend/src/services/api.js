@@ -576,6 +576,29 @@ const api = {
   deleteSkillTreeGame: async (gameId) => {
     const response = await apiClient.delete(`/gamification/skill-tree/games/${gameId}`);
     return response.data;
+  },
+
+  // --- Deep Research APIs (Task 1.3.1 - 1.3.3) ---
+  conductDeepResearch: async (payload) => {
+    // payload: { query, depthLevel, reportStyle, includeFactCheck, conversationHistory }
+    const response = await apiClient.post('/deep-research/report', payload);
+    return response.data;
+  },
+
+  getResearchHistory: async () => {
+    const response = await apiClient.get('/deep-research/history');
+    return response.data;
+  },
+
+  getCachedResearch: async (queryHash) => {
+    const response = await apiClient.get(`/deep-research/cache/${queryHash}`);
+    return response.data;
+  },
+
+  factCheckText: async (payload) => {
+    // payload: { text, sources, query }
+    const response = await apiClient.post('/deep-research/fact-check', payload);
+    return response.data;
   }
 };
 

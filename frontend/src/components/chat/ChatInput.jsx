@@ -26,6 +26,7 @@ function ChatInput({
 }) {
     const [inputValue, setInputValue] = useState('');
     const { transcript, listening, isSpeechSupported, startListening, stopListening, resetTranscript } = useWebSpeech();
+    const { deepResearchMode, setDeepResearchMode } = useAppState();
     const textareaRef = useRef(null);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const menuRef = useRef(null);
@@ -189,10 +190,31 @@ function ChatInput({
                                 className="absolute bottom-full left-0 mb-2 w-56 bg-surface-light dark:bg-surface-dark rounded-lg shadow-xl border border-border-light dark:border-border-dark p-1 z-10"
                             >
                                 <button
+                                    onClick={() => {
+                                        const newState = !deepResearchMode;
+                                        setDeepResearchMode(newState);
+                                        if (newState) {
+                                            setUseWebSearch(false);
+                                            setUseAcademicSearch(false);
+                                            setCriticalThinkingEnabled(false);
+                                        }
+                                        toast(newState ? "Deep Research Mode enabled." : "Deep Research Mode disabled.", { icon: "🧠" });
+                                        setIsMenuOpen(false);
+                                    }}
+                                    className={`w-full text-left flex items-center gap-2 px-3 py-2 text-sm rounded-md transition-colors ${deepResearchMode
+                                        ? 'bg-indigo-500/10 text-indigo-600 dark:bg-indigo-400/20 dark:text-indigo-300'
+                                        : 'text-text-light dark:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-700'
+                                        }`}
+                                >
+                                    <Sparkles size={16} />
+                                    {deepResearchMode ? 'Disable Deep Research' : 'Enable Deep Research'}
+                                </button>
+                                <div className="border-t border-border-light dark:border-border-dark my-1"></div>
+                                <button
                                     onClick={handleWebSearchToggle}
                                     className={`w-full text-left flex items-center gap-2 px-3 py-2 text-sm rounded-md transition-colors ${useWebSearch
-                                            ? 'bg-primary/10 text-primary dark:bg-primary-dark/20 dark:text-primary-light'
-                                            : 'text-text-light dark:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-700'
+                                        ? 'bg-primary/10 text-primary dark:bg-primary-dark/20 dark:text-primary-light'
+                                        : 'text-text-light dark:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-700'
                                         }`}
                                 >
                                     <Globe size={16} />
@@ -201,8 +223,8 @@ function ChatInput({
                                 <button
                                     onClick={handleAcademicSearchToggle}
                                     className={`w-full text-left flex items-center gap-2 px-3 py-2 text-sm rounded-md transition-colors ${useAcademicSearch
-                                            ? 'bg-purple-500/10 text-purple-600 dark:bg-purple-400/20 dark:text-purple-300'
-                                            : 'text-text-light dark:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-700'
+                                        ? 'bg-purple-500/10 text-purple-600 dark:bg-purple-400/20 dark:text-purple-300'
+                                        : 'text-text-light dark:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-700'
                                         }`}
                                 >
                                     <BookMarked size={16} />
@@ -284,6 +306,36 @@ function ChatInput({
                     disabled={isLoading || isCoaching || !inputValue.trim()}
                 />
 
+                {/* Directly visible Research Toggles for better discoverability (Milestone 1.4 Integration) */}
+                <div className="hidden sm:flex items-center gap-1 mr-1">
+                    <IconButton
+                        icon={Globe}
+                        onClick={handleWebSearchToggle}
+                        title={useWebSearch ? "Disable Web Search" : "Enable Web Search"}
+                        variant="ghost"
+                        size="md"
+                        className={`p-2 ${useWebSearch ? 'text-blue-500 bg-blue-500/10' : 'text-text-muted-light dark:text-text-muted-dark hover:text-blue-500'}`}
+                        disabled={isLoading || deepResearchMode}
+                    />
+                    <IconButton
+                        icon={Sparkles}
+                        onClick={() => {
+                            const newState = !deepResearchMode;
+                            setDeepResearchMode(newState);
+                            if (newState) {
+                                setUseWebSearch(false);
+                                setUseAcademicSearch(false);
+                            }
+                            toast(newState ? "Deep Research Mode enabled." : "Deep Research Mode disabled.", { icon: "🧠" });
+                        }}
+                        title={deepResearchMode ? "Disable Deep Research" : "Enable Deep Research"}
+                        variant="ghost"
+                        size="md"
+                        className={`p-2 ${deepResearchMode ? 'text-indigo-500 bg-indigo-500/10' : 'text-text-muted-light dark:text-text-muted-dark hover:text-indigo-500'}`}
+                        disabled={isLoading}
+                    />
+                </div>
+
                 <IconButton
                     icon={icon}
                     onClick={() => setCriticalThinkingEnabled(!criticalThinkingEnabled)}
@@ -291,7 +343,7 @@ function ChatInput({
                     variant="ghost"
                     size="md"
                     className={`p-2 hidden sm:flex ${criticalThinkingEnabled ? 'text-purple-500' : 'text-text-muted-light dark:text-text-muted-dark hover:text-primary'}`}
-                    disabled={isLoading}
+                    disabled={isLoading || deepResearchMode}
                 />
 
                 {/* --- THIS IS THE FIX (Part 3) --- */}
@@ -324,6 +376,15 @@ function ChatInput({
 
             <div className="flex flex-wrap items-center justify-center mt-2 px-2 text-center h-4 gap-x-4">
                 <AnimatePresence>
+                    {deepResearchMode && (
+                        <motion.p
+                            key="deep-research-indicator"
+                            initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
+                            className="text-[10px] text-indigo-500 dark:text-indigo-400 flex items-center gap-1.5 font-bold uppercase tracking-wider"
+                        >
+                            <Sparkles size={10} className="animate-pulse" /> Deep Research Active
+                        </motion.p>
+                    )}
                     {useWebSearch && (
                         <motion.p
                             key="web-search-indicator"

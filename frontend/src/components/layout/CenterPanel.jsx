@@ -8,7 +8,9 @@ import api from '../../services/api';
 import { useAuth as useRegularAuth } from '../../hooks/useAuth';
 import { useAppState } from '../../contexts/AppStateContext';
 import toast from 'react-hot-toast';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import DeepResearchPanel from '../research/DeepResearchPanel';
+import ResearchHistory from '../research/ResearchHistory';
 import {
     BookMarked,
     Code,
@@ -25,7 +27,8 @@ import {
     CheckCircle,
     XCircle,
     X,
-    MapPin
+    MapPin,
+    History
 } from 'lucide-react';
 
 const features = [];
@@ -43,7 +46,16 @@ const glowStyles = {
 
 function CenterPanel({ messages, setMessages, currentSessionId, onChatProcessingChange, initialPromptForNewSession, setInitialPromptForNewSession, initialActivityForNewSession, setInitialActivityForNewSession }) {
     const { token: regularUserToken } = useRegularAuth();
-    const { setSelectedSubject, systemPrompt, selectedDocumentForAnalysis, selectedSubject, tutorMode, setTutorMode } = useAppState();
+    const {
+        setSelectedSubject,
+        systemPrompt,
+        selectedDocumentForAnalysis,
+        selectedSubject,
+        tutorMode,
+        setTutorMode,
+        deepResearchMode,
+        setDeepResearchMode
+    } = useAppState();
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -58,6 +70,12 @@ function CenterPanel({ messages, setMessages, currentSessionId, onChatProcessing
     const [coachData, setCoachData] = useState(null);
     const [activeBountyId, setActiveBountyId] = useState(null);
     const [activeBountyMetadata, setActiveBountyMetadata] = useState(null);
+
+    // Deep Research State
+    const [isResearchActive, setIsResearchActive] = useState(false);
+    const [researchData, setResearchData] = useState(null);
+    const [researchQuery, setResearchQuery] = useState('');
+    const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
     const handleStreamingSendMessage = useCallback(async (inputText, placeholderId, options) => {
         const payload = {
@@ -296,6 +314,11 @@ function CenterPanel({ messages, setMessages, currentSessionId, onChatProcessing
                 isBountyAnswer: !!activeBountyId
             };
 
+            if (deepResearchMode) {
+                await handleDeepResearch(inputText);
+                return;
+            }
+
             if (effectiveCriticalThinking) {
                 await handleStreamingSendMessage(inputText, streamingPlaceholderId, enrichedOptions);
             } else {
@@ -324,11 +347,37 @@ function CenterPanel({ messages, setMessages, currentSessionId, onChatProcessing
             }
         }
     }, [
-        regularUserToken, currentSessionId, isActuallySendingAPI, useWebSearch,
-        useAcademicSearch, criticalThinkingEnabled, selectedSubject,
-        selectedDocumentForAnalysis, setMessages, onChatProcessingChange,
-        handleStreamingSendMessage, handleStandardSendMessage, systemPrompt
+        handleStreamingSendMessage, handleStandardSendMessage, systemPrompt,
+        deepResearchMode
     ]);
+
+    const handleDeepResearch = async (query) => {
+        setIsResearchActive(true);
+        setResearchQuery(query);
+        setResearchData(null);
+        onChatProcessingChange(true);
+
+        try {
+            const response = await api.conductDeepResearch({
+                query,
+                depthLevel: 'standard',
+                includeFactCheck: true
+            });
+
+            if (response.success) {
+                setResearchData(response.data);
+                toast.success("Deep Research Complete!");
+            } else {
+                throw new Error(response.message || "Research failed");
+            }
+        } catch (error) {
+            console.error("Deep Research Error:", error);
+            toast.error(`Deep Research Failed: ${error.message}`);
+            setIsResearchActive(false);
+        } finally {
+            onChatProcessingChange(false);
+        }
+    };
 
     useEffect(() => {
         const fetchRecommendations = async () => {
@@ -477,7 +526,70 @@ function CenterPanel({ messages, setMessages, currentSessionId, onChatProcessing
     );
 
     return (
-        <div className="flex flex-col h-full bg-background-light dark:bg-background-dark rounded-lg shadow-inner">
+        <div className="flex flex-col h-full bg-background-light dark:bg-background-dark rounded-lg shadow-inner relative overflow-hidden">
+            {/* Deep Research Overlay */}
+            <AnimatePresence>
+                {isResearchActive && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 20 }}
+                        className="absolute inset-0 z-50 bg-background-light dark:bg-background-dark p-4 md:p-6"
+                    >
+                        <div className="flex items-center justify-between mb-4">
+                            <button
+                                onClick={() => setIsHistoryOpen(true)}
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border-light dark:border-border-dark text-xs font-bold text-text-muted-light dark:text-text-muted-dark hover:text-primary transition-all"
+                            >
+                                <History size={14} /> History
+                            </button>
+                            <button
+                                onClick={() => setIsResearchActive(false)}
+                                className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                            >
+                                <X size={20} className="text-text-muted-light dark:text-text-muted-dark" />
+                            </button>
+                        </div>
+                        <div className="h-[calc(100%-3rem)]">
+                            <DeepResearchPanel
+                                isActive={isResearchActive}
+                                researchData={researchData}
+                                query={researchQuery}
+                                onComplete={() => { }}
+                            />
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Research History Modal Overlay */}
+            <AnimatePresence>
+                {isHistoryOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 z-[60] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.95, opacity: 0 }}
+                            className="w-full max-w-lg h-[600px] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden"
+                        >
+                            <ResearchHistory
+                                onClose={() => setIsHistoryOpen(false)}
+                                onSelect={(item) => {
+                                    setResearchQuery(item.query);
+                                    setResearchData(item);
+                                    setIsResearchActive(true);
+                                    setIsHistoryOpen(false);
+                                }}
+                            />
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
             {/* Tutor Mode Banner */}
             {tutorMode && (
                 <div className="flex-shrink-0 bg-gradient-to-r from-primary/10 to-purple-500/10 border-b border-primary/30 px-4 py-2 flex items-center justify-between">

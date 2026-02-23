@@ -391,50 +391,55 @@ const CHAT_USER_PROMPT_TEMPLATES = {
 // === ToT Orchestrator  ===
 // ==============================================================================
 const PLANNER_PROMPT_TEMPLATE = `
-You are a meticulous AI planning agent. Your task is to analyze the user's query and generate 4-5 distinct, logical, step-by-step plans to answer it.
+You are a meticulous AI planning agent. Your task is to analyze the user's query and generate 3-4 distinct, logical, hierarchical plans to answer it.
 
 **User Query:** "{userQuery}"
 
-**AVAILABLE TOOLS (for your reference when selecting tool_call):**
+**AVAILABLE TOOLS:**
 {available_tools_json}
 
-**CURRENT_MODE_INSTRUCTIONS (CRITICAL: Adhere to these strictly for your tool_call decisions):**
+**CURRENT_MODE_INSTRUCTIONS:**
 {current_mode_tool_instruction}
 
 **Instructions:**
-1.  Create 4-5 unique plans. Each plan should have a descriptive "name".
-2.  Each plan must contain a list of "steps". Each step should be a clear, concise instruction for an executor.
-3.  For EACH step, you MUST include a "tool_call" field.
-    *   If the step requires using one of the "AVAILABLE TOOLS", set \`tool_call\` to an object: \`{"tool_name": "the_tool_name_you_chose", "parameters": {"query": "The exact parameter string for the tool"}}\`.
-    *   If the step can be answered directly using general knowledge (no specific tool needed), set \`tool_call\` to \`null\`.
-4.  Your entire output MUST be a single, valid JSON object containing a "plans" array. Do not provide any other text or explanation outside the JSON.
+1. Create 3-4 unique plans. Each plan should have a descriptive "name".
+2. Each plan must be a list of "tasks". **Hierarchical planning is required for complex queries.**
+3. For each task, you MUST include:
+   - "id": A unique short string (e.g., "T1", "T1.1").
+   - "parent_id": The ID of the parent task (null if top-level).
+   - "depends_on": An array of IDs this task requires to be finished first (e.g., ["T1"]).
+   - "description": Clear, concise goal for this task.
+   - "tool_call": 
+     - Use a tool: \`{"tool_name": "...", "parameters": {"query": "..."}}\`.
+     - Direct answer/Synthesis: \`null\`.
+4. Strategy: Break complex goals into foundational research (level 1) followed by specific analysis or synthesis tasks (level 2).
 
-**Example JSON Output Format:**
+**Example JSON Output:**
 \`\`\`json
 {
   "plans": [
     {
-      "name": "Comprehensive Research Plan",
-      "steps": [
+      "name": "Deep Comparative Analysis",
+      "tasks": [
         {
-          "description": "First, search internal documents for foundational concepts related to the query.",
-          "tool_call": {"tool_name": "rag_search", "parameters": {"query": "foundational concepts of {userQuery}"}}
+          "id": "T1",
+          "parent_id": null,
+          "depends_on": [],
+          "description": "Research Core Concept A",
+          "tool_call": {"tool_name": "web_search", "parameters": {"query": "Concept A overview"}}
         },
         {
-          "description": "Second, perform a web search for the latest real-world applications.",
-          "tool_call": {"tool_name": "web_search", "parameters": {"query": "latest real-world applications of {userQuery}"}}
+          "id": "T2",
+          "parent_id": null,
+          "depends_on": [],
+          "description": "Research Core Concept B",
+          "tool_call": {"tool_name": "web_search", "parameters": {"query": "Concept B overview"}}
         },
         {
-          "description": "Finally, synthesize the findings from all sources.",
-          "tool_call": null
-        }
-      ]
-    },
-    {
-      "name": "Quick Direct Answer Plan",
-      "steps": [
-        {
-          "description": "Provide a concise direct answer based on general knowledge.",
+          "id": "T3",
+          "parent_id": null,
+          "depends_on": ["T1", "T2"],
+          "description": "Synthesize a comparative analysis between A and B.",
           "tool_call": null
         }
       ]

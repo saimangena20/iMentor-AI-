@@ -19,7 +19,7 @@ async function switchToOllama() {
                 $set: {
                     preferredLlmProvider: 'ollama',
                     ollamaUrl: 'http://localhost:11434',
-                    ollamaModel: process.env.OLLAMA_DEFAULT_MODEL || 'qwen2.5:14b-instruct'
+                    ollamaModel: process.env.OLLAMA_DEFAULT_MODEL || 'qwen2.5:3b-instruct'
                 }
             }
         );
@@ -27,7 +27,7 @@ async function switchToOllama() {
         console.log(`✅ Updated ${result.modifiedCount} users to use Ollama`);
         console.log(`   Provider: ollama`);
         console.log(`   URL: http://localhost:11434`);
-        console.log(`   Model: ${process.env.OLLAMA_DEFAULT_MODEL || 'qwen2.5:14b-instruct'}`);
+        console.log(`   Model: ${process.env.OLLAMA_DEFAULT_MODEL || 'qwen2.5:3b-instruct'}`);
 
         await mongoose.disconnect();
         console.log('\n✅ Done! Users are now configured to use Ollama.');

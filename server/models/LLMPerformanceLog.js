@@ -5,11 +5,14 @@ const LLMPerformanceLogSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   sessionId: { type: String, required: true, index: true },
   query: { type: String, required: true },
-  response: { type: String, required: true }, // <<< ADD THIS LINE
+  response: { type: String }, // Optional depending on logging depth
+  queryCategory: { type: String, index: true }, // e.g., 'coding', 'reasoning'
   chosenModelId: { type: String, required: true },
-  routerLogic: { type: String },
+  routerLogic: { type: String }, // e.g., 'intelligent_v1', 'ab_test_b'
+  isABTest: { type: Boolean, default: false },
   responseTimeMs: { type: Number },
   userFeedback: { type: String, enum: ['positive', 'negative', 'none'], default: 'none' },
+  metadata: { type: Map, of: mongoose.Schema.Types.Mixed }, // For flexible future logging
   createdAt: { type: Date, default: Date.now },
 });
 

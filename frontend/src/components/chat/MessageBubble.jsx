@@ -81,7 +81,7 @@ const CodeBlockWithCopyButton = ({ children, codeText, key }) => {
 
     return (
         <div className="relative group/code" ref={codeRef} key={key}>
-            <div dangerouslySetInnerHTML={{ __html: children }} /> 
+            <div dangerouslySetInnerHTML={{ __html: children }} />
             <button
                 onClick={handleCopyCode}
                 title={copied ? 'Copied!' : 'Copy code'}
@@ -118,8 +118,8 @@ const parseAndRenderMarkdown = (markdownText, messageId) => {
     const flushHtmlBuffer = () => {
         if (currentHtmlBuffer) {
             resultNodes.push(
-                <div key={`html-${messageId}-${resultNodes.length}-${Math.random().toString(36).substring(2,9)}`} 
-                     dangerouslySetInnerHTML={{ __html: currentHtmlBuffer }} />
+                <div key={`html-${messageId}-${resultNodes.length}-${Math.random().toString(36).substring(2, 9)}`}
+                    dangerouslySetInnerHTML={{ __html: currentHtmlBuffer }} />
             );
             currentHtmlBuffer = '';
         }
@@ -136,28 +136,28 @@ const parseAndRenderMarkdown = (markdownText, messageId) => {
             const preOuterHtml = node.outerHTML;
 
             resultNodes.push(
-                <CodeBlockWithCopyButton 
-                    key={`code-${messageId}-${resultNodes.length}-${Math.random().toString(36).substring(2,9)}`}
+                <CodeBlockWithCopyButton
+                    key={`code-${messageId}-${resultNodes.length}-${Math.random().toString(36).substring(2, 9)}`}
                     codeText={codeText}
                 >
                     {preOuterHtml}
                 </CodeBlockWithCopyButton>
             );
-            return; 
-        } 
-        
+            return;
+        }
+
         if (node.nodeType === Node.TEXT_NODE) {
             currentHtmlBuffer += node.nodeValue;
         } else if (node.nodeType === Node.ELEMENT_NODE) {
-            currentHtmlBuffer += node.outerHTML; 
-            return; 
+            currentHtmlBuffer += node.outerHTML;
+            return;
         }
 
         Array.from(node.childNodes).forEach(traverse);
     };
 
     Array.from(doc.body.children).forEach(traverse);
-    
+
     flushHtmlBuffer();
 
     return resultNodes;
@@ -207,13 +207,13 @@ const CriticalThinkingCue = ({ icon: Icon, label, text, color, onClick }) => {
 
 
 
-function MessageBubble({ sender, text, thinking, references, timestamp, sourcePipeline, isStreaming, criticalThinkingCues, onCueClick, messageId, logId }) {
+function MessageBubble({ sender, text, thinking, reasoning_steps, references, timestamp, sourcePipeline, isStreaming, criticalThinkingCues, onCueClick, messageId, logId }) {
     const isUser = sender === 'user';
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [feedbackSent, setFeedbackSent] = useState(null);
     const contentRef = useRef(null);
     const { speak, cancel, isSpeaking } = useTextToSpeech();
-    
+
     const [isCopied, setIsCopied] = useState(false);
     const mainContent = text || '';
     const thinkingContent = thinking;
@@ -244,7 +244,7 @@ function MessageBubble({ sender, text, thinking, references, timestamp, sourcePi
         if (isCopied) return;
         const plainTextToCopy = getPlainTextFromMarkdown(mainContent);
         const success = await copyToClipboard(plainTextToCopy);
-    
+
         if (success) {
             setIsCopied(true);
             setTimeout(() => setIsCopied(false), 1500);
@@ -255,7 +255,7 @@ function MessageBubble({ sender, text, thinking, references, timestamp, sourcePi
     };
 
     const formatTimestamp = (ts) => {
-        if (!ts) return ''; 
+        if (!ts) return '';
         return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
@@ -268,7 +268,7 @@ function MessageBubble({ sender, text, thinking, references, timestamp, sourcePi
         if (lower.includes('error')) return <ServerCrash size={12} className="text-red-400" title="Error" />;
         return null;
     };
-    
+
     return (
         <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} w-full group`}>
             <div className={`message-bubble-wrapper max-w-[85%] md:max-w-[75%] ${isStreaming ? 'w-full' : ''}`}>
@@ -278,9 +278,10 @@ function MessageBubble({ sender, text, thinking, references, timestamp, sourcePi
                             isOpen={isDropdownOpen}
                             setIsOpen={setIsDropdownOpen}
                             isStreaming={isStreaming}
+                            reasoningSteps={reasoning_steps}
                         >
-                            {isStreaming 
-                                ? <AnimatedThinking content={thinkingContent} /> 
+                            {isStreaming
+                                ? <AnimatedThinking content={thinkingContent} />
                                 : <div className="prose prose-xs dark:prose-invert max-w-none text-text-muted-light dark:text-text-muted-dark" dangerouslySetInnerHTML={createMarkup(thinkingContent)} />
                             }
                         </ThinkingDropdown>
@@ -290,11 +291,10 @@ function MessageBubble({ sender, text, thinking, references, timestamp, sourcePi
                 {isStreaming ? (
                     <TypingIndicator />
                 ) : (
-                    <div className={`message-bubble relative p-3 rounded-2xl shadow-md break-words ${
-                        isUser 
-                        ? 'bg-surface-light text-text-light border border-border-light dark:bg-primary-dark dark:text-white dark:border-transparent rounded-br-lg' 
-                        : 'bg-surface-light dark:bg-surface-dark text-text-light dark:text-text-dark rounded-bl-lg border border-border-light dark:border-border-dark'
-                    }`}>
+                    <div className={`message-bubble relative p-3 rounded-2xl shadow-md break-words ${isUser
+                            ? 'bg-surface-light text-text-light border border-border-light dark:bg-primary-dark dark:text-white dark:border-transparent rounded-br-lg'
+                            : 'bg-surface-light dark:bg-surface-dark text-text-light dark:text-text-dark rounded-bl-lg border border-border-light dark:border-border-dark'
+                        }`}>
                         <div ref={contentRef} className="prose prose-sm dark:prose-invert max-w-none message-content leading-relaxed">
                             {parseAndRenderMarkdown(mainContent, messageId)}
                         </div>
@@ -351,8 +351,8 @@ function MessageBubble({ sender, text, thinking, references, timestamp, sourcePi
                         </summary>
                         <ul className="mt-1 pl-1 space-y-0.5 text-[0.7rem]">
                             {references.map((ref, index) => (
-                                <li 
-                                    key={index} 
+                                <li
+                                    key={index}
                                     className="text-text-muted-light dark:text-text-muted-dark hover:text-text-light dark:hover:text-text-dark transition-colors truncate"
                                     title={`Preview: ${escapeHtml(ref.content_preview || '')}\nSource: ${escapeHtml(ref.source || '')}`}
                                 >
@@ -363,9 +363,9 @@ function MessageBubble({ sender, text, thinking, references, timestamp, sourcePi
                     </details>
                 </div>
             )}
-            
+
             {!isStreaming && !isUser && criticalThinkingCues && (
-                <motion.div 
+                <motion.div
                     initial="hidden"
                     animate="visible"
                     variants={{
@@ -414,8 +414,8 @@ function MessageBubble({ sender, text, thinking, references, timestamp, sourcePi
                     </div>
                 </motion.div>
             )}
-            </div>
-        );
-    }
+        </div>
+    );
+}
 
 export default memo(MessageBubble);

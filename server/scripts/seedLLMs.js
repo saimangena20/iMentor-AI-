@@ -18,7 +18,7 @@ const llmSeedData = [
     provider: "gemini",
     displayName: "Gemini 2.5 Flash (Default)",
     description: "Next-gen performance for general chat, creative tasks, and summarization.",
-    isDefault: false, 
+    isDefault: false,
     strengths: ["chat", "creative", "summarization"],
     subjectFocus: null
   },
@@ -48,7 +48,7 @@ const llmSeedData = [
     provider: "gemini",
     displayName: "Gemini 1.5 Flash (Legacy)",
     description: "A solid and fast model for general-purpose tasks.",
-    isDefault: false, 
+    isDefault: false,
     strengths: [], // No specific strengths to ensure it's not auto-selected over 2.5 Flash
     subjectFocus: null
   },
@@ -59,7 +59,7 @@ const llmSeedData = [
 
   // 5. Ollama: Default & Strong All-Rounder
   {
-    modelId: "qwen2.5:14b-instruct",
+    modelId: "qwen2.5:3b-instruct",
     provider: "ollama",
     displayName: "Ollama qwen 2.5 14b (Default)",
     description: "A well-rounded model for general chat and creative writing.",
@@ -88,13 +88,61 @@ const llmSeedData = [
     subjectFocus: null
   },
   // 8. Ollama: Fast & Efficient Model for Summarization
-   {
+  {
     modelId: "phi3:instruct",
     provider: "ollama",
     displayName: "Ollama Phi-3 Mini",
     description: "A fast and capable small model for summarization tasks.",
     isDefault: false,
     strengths: ["summarization"],
+    subjectFocus: null
+  },
+
+  // ===================================================================
+  // === CLAUDE MODELS (Anthropic)                                   ===
+  // ===================================================================
+  {
+    modelId: "claude-3-5-sonnet-latest",
+    provider: "claude",
+    displayName: "Claude 3.5 Sonnet",
+    description: "Highly intelligent and fast model from Anthropic, excellent for coding and nuanced reasoning.",
+    isDefault: true,
+    strengths: ["code", "reasoning", "creative"],
+    subjectFocus: null
+  },
+  {
+    modelId: "claude-3-opus-latest",
+    provider: "claude",
+    displayName: "Claude 3 Opus",
+    description: "Anthropic's most powerful model for highly complex tasks.",
+    isDefault: false,
+    strengths: ["technical", "reasoning"],
+    subjectFocus: null
+  },
+
+  // ===================================================================
+  // === MISTRAL MODELS                                              ===
+  // ===================================================================
+  {
+    modelId: "mistral-large-latest",
+    provider: "mistral",
+    displayName: "Mistral Large",
+    description: "Flagship Mistral model with excellent multilingual support and reasoning capabilities.",
+    isDefault: true,
+    strengths: ["multilingual", "reasoning"],
+    subjectFocus: null
+  },
+
+  // ===================================================================
+  // === OPENAI MODELS                                              ===
+  // ===================================================================
+  {
+    modelId: "gpt-4o",
+    provider: "openai",
+    displayName: "GPT-4o",
+    description: "OpenAI's most advanced multimodal model, superb for general tasks and reasoning.",
+    isDefault: true,
+    strengths: ["chat", "reasoning", "technical"],
     subjectFocus: null
   },
 
@@ -131,11 +179,11 @@ const seedLLMConfigurations = async () => {
     const modelsToUpdate = llmSeedData.filter(seed => existingModelIds.has(seed.modelId));
 
     if (modelsToUpdate.length > 0) {
-        console.log(`Found ${modelsToUpdate.length} existing LLM configurations to update.`);
-        for (const modelData of modelsToUpdate) {
-            await LLMConfiguration.updateOne({ modelId: modelData.modelId }, { $set: modelData });
-            console.log(`- Updated ${modelData.displayName}`);
-        }
+      console.log(`Found ${modelsToUpdate.length} existing LLM configurations to update.`);
+      for (const modelData of modelsToUpdate) {
+        await LLMConfiguration.updateOne({ modelId: modelData.modelId }, { $set: modelData });
+        console.log(`- Updated ${modelData.displayName}`);
+      }
     }
 
     if (modelsToInsert.length === 0) {

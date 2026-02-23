@@ -5,11 +5,11 @@ import { useTypingEffect } from '../../hooks/useTypingEffect';
 
 function StreamingResponse({ streamingResponse }) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [thoughtChunks, setThoughtChunks] = useState([]);       
-  const [queuedChunks, setQueuedChunks] = useState([]);         
-  const [currentTyping, setCurrentTyping] = useState('');       
-  const isTyping = useRef(false);                               
-  const lastProcessed = useRef('');                             
+  const [thoughtChunks, setThoughtChunks] = useState([]);
+  const [queuedChunks, setQueuedChunks] = useState([]);
+  const [currentTyping, setCurrentTyping] = useState('');
+  const isTyping = useRef(false);
+  const lastProcessed = useRef('');
 
   // 🔓 Open dropdown when thinking begins
   useEffect(() => {
@@ -34,20 +34,20 @@ function StreamingResponse({ streamingResponse }) {
 
   // ✅ Start next typing only when current finishes
   const handleTypingComplete = useCallback(() => {
-  if (currentTyping.trim()) {
-    setThoughtChunks(prev => [...prev, currentTyping.trim()]);
-  }
-  setCurrentTyping('');
-  isTyping.current = false;
+    if (currentTyping.trim()) {
+      setThoughtChunks(prev => [...prev, currentTyping.trim()]);
+    }
+    setCurrentTyping('');
+    isTyping.current = false;
 
-  // ✅ Immediately start next typing
-  if (queuedChunks.length > 0) {
-    const next = queuedChunks[0];
-    isTyping.current = true;
-    setCurrentTyping(next);
-    setQueuedChunks(prev => prev.slice(1));
-  }
-}, [currentTyping, queuedChunks]);
+    // ✅ Immediately start next typing
+    if (queuedChunks.length > 0) {
+      const next = queuedChunks[0];
+      isTyping.current = true;
+      setCurrentTyping(next);
+      setQueuedChunks(prev => prev.slice(1));
+    }
+  }, [currentTyping, queuedChunks]);
 
 
   // 🔁 Initial trigger when first chunk is available
@@ -73,6 +73,7 @@ function StreamingResponse({ streamingResponse }) {
             isOpen={isDropdownOpen}
             setIsOpen={setIsDropdownOpen}
             isStreaming={isThinkingStreaming}
+            reasoningSteps={streamingResponse?.reasoning_steps}
           >
             <pre className="text-xs text-text-muted-light dark:text-text-muted-dark whitespace-pre-wrap font-sans leading-relaxed">
               {[...thoughtChunks, animatedCurrentChunk].filter(Boolean).join('\n\n')}
@@ -82,9 +83,10 @@ function StreamingResponse({ streamingResponse }) {
             </pre>
           </ThinkingDropdown>
         </div>
-      )}
+      )
+      }
       <TypingIndicator />
-    </div>
+    </div >
   );
 }
 

@@ -4,7 +4,7 @@ import api from '../../services/api';
 import toast from 'react-hot-toast';
 import Modal from '../core/Modal.jsx';
 import Button from '../core/Button.jsx';
-import { Save, User, School, Hash, Award, Wrench, Calendar, Lightbulb, Goal, ChevronDown } from 'lucide-react';
+import { Save, User, School, Hash, Award, Wrench, Calendar, Lightbulb, Goal, ChevronDown, BrainCircuit } from 'lucide-react';
 
 const yearOptions = {
     "Bachelor's": ["1st Year", "2nd Year", "3rd Year", "4th Year"],
@@ -44,8 +44,9 @@ const ProfileSettingsModal = ({ isOpen, onClose }) => {
                         degreeType: data.degreeType || "Bachelor's",
                         branch: data.branch || 'Computer Science',
                         year: data.year || '1st Year',
-                        learningStyle: data.learningStyle || 'Visual', // Add new field with default
-                        currentGoals: data.currentGoals || '' // Add new field with default
+                        learningStyle: data.learningStyle || 'Visual',
+                        currentGoals: data.currentGoals || '',
+                        preferredLlmProvider: data.preferredLlmProvider || 'gemini'
                     });
                 } catch (err) {
                     toast.error('Failed to load profile data.');
@@ -99,7 +100,7 @@ const ProfileSettingsModal = ({ isOpen, onClose }) => {
             setIsLoading(false);
         }
     };
-    
+
     const inputWrapperClass = "relative";
     const inputIconClass = "absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-text-muted-light dark:text-text-muted-dark pointer-events-none";
     const inputFieldStyledClass = "input-field pl-10 py-2.5 text-sm";
@@ -122,7 +123,7 @@ const ProfileSettingsModal = ({ isOpen, onClose }) => {
         >
             <form onSubmit={handleSubmit} className="space-y-4">
                 {error && <p className="text-sm text-red-500">{error}</p>}
-                
+
                 {/* --- Academic Details Section --- */}
                 <h3 className="text-sm font-semibold text-text-muted-light dark:text-text-muted-dark border-b border-border-light dark:border-border-dark pb-2">Academic Profile</h3>
                 <div className={inputWrapperClass}>
@@ -150,7 +151,7 @@ const ProfileSettingsModal = ({ isOpen, onClose }) => {
                     <div className={inputWrapperClass}>
                         <Wrench className={inputIconClass} />
                         <select name="branch" value={profile.branch} onChange={handleChange} className="input-field !pl-10 !pr-8 py-2.5 text-sm appearance-none text-left" required>
-                        <option>Computer Science</option><option>Mechanical</option><option>Electrical</option><option>Civil</option><option>Electronics</option><option>Other</option>
+                            <option>Computer Science</option><option>Mechanical</option><option>Electrical</option><option>Civil</option><option>Electronics</option><option>Other</option>
                         </select>
                         <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted-light dark:text-text-muted-dark" />
                     </div>
@@ -182,12 +183,27 @@ const ProfileSettingsModal = ({ isOpen, onClose }) => {
                             <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted-light dark:text-text-muted-dark" />
                         </div>
                     </div>
+                    {/* --- LLM PROVIDER SELECTION --- */}
                     <div className="space-y-1">
-                        <label className="block text-xs font-medium text-text-muted-light dark:text-text-muted-dark">Current Learning Goals (Optional)</label>
+                        <label className="block text-xs font-medium text-text-muted-light dark:text-text-muted-dark">Preferred AI Provider</label>
                         <div className={inputWrapperClass}>
-                            <Goal className={inputIconClass} />
-                            <textarea name="currentGoals" value={profile.currentGoals} onChange={handleChange} placeholder="e.g., Prepare for my AI exam..." className={`${inputFieldStyledClass} !h-[42px] resize-none`} maxLength="500"></textarea>
+                            <BrainCircuit className={inputIconClass} />
+                            <select name="preferredLlmProvider" value={profile.preferredLlmProvider} onChange={handleChange} className="input-field !pl-10 !pr-8 py-2.5 text-sm appearance-none text-left" required>
+                                <option value="gemini">Google Gemini</option>
+                                <option value="openai">OpenAI (GPT-4o)</option>
+                                <option value="claude">Anthropic Claude</option>
+                                <option value="mistral">Mistral AI</option>
+                                <option value="ollama">Ollama (Local)</option>
+                            </select>
+                            <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted-light dark:text-text-muted-dark" />
                         </div>
+                    </div>
+                </div>
+                <div className="space-y-1 pt-2">
+                    <label className="block text-xs font-medium text-text-muted-light dark:text-text-muted-dark">Current Learning Goals (Optional)</label>
+                    <div className={inputWrapperClass}>
+                        <Goal className={inputIconClass} />
+                        <textarea name="currentGoals" value={profile.currentGoals} onChange={handleChange} placeholder="e.g., Prepare for my AI exam..." className={`${inputFieldStyledClass} !h-[42px] resize-none`} maxLength="500"></textarea>
                     </div>
                 </div>
             </form>

@@ -4,17 +4,48 @@ const { processAgenticRequest } = require('./agentService');
 const geminiService = require('./geminiService');
 const ollamaService = require('./ollamaService');
 const { availableTools } = require('./toolRegistry');
+const cotService = require('./cotService');
+const totPruningService = require('./totPruningService');
 const { PLANNER_PROMPT_TEMPLATE, EVALUATOR_PROMPT_TEMPLATE, createSynthesizerPrompt, CHAT_MAIN_SYSTEM_PROMPT } = require('../config/promptTemplates');
 
+/**
+ * Helper to call LLM with automatic failover on quota exhaustion.
+ */
+async function callWithFailover(service, chatHistory, query, systemPrompt, options, requestContext) {
+    try {
+        return await service.generateContentWithHistory(chatHistory, query, systemPrompt, options);
+    } catch (error) {
+        if (error.isQuotaExceeded && options.provider !== 'ollama') {
+            console.warn(`[ToT Orchestrator] Quota exceeded for ${options.provider}. Falling back to Ollama...`);
+            const ollamaOptions = {
+                ...options,
+                model: requestContext.ollamaModel,
+                ollamaUrl: requestContext.ollamaUrl,
+                provider: 'ollama'
+            };
+            return await ollamaService.generateContentWithHistory(chatHistory, query, systemPrompt, ollamaOptions);
+        }
+        throw error;
+    }
+}
+
 async function isQueryComplex(query, requestContext) {
+    let score = 0;
     if (requestContext.documentContextName) {
-        console.log(`[ToT] Step 1: Complexity Gate. Decision: COMPLEX (Document context '${requestContext.documentContextName}' is active).`);
-        return true;
+        score = 100;
+        console.log(`[ToT] Step 1: Complexity Gate. Decision: COMPLEX (Score: ${score}, Document active).`);
+        return { isComplex: true, score };
     }
 
-    const isComplex = (query.match(/\?/g) || []).length > 1 || query.split(' ').length > 20;
-    console.log(`[ToT] Step 1: Complexity Gate. Query: "${query.substring(0, 30)}...". Decision: ${isComplex ? 'COMPLEX' : 'SIMPLE'}`);
-    return isComplex;
+    const questionCount = (query.match(/\?/g) || []).length;
+    const wordCount = query.split(' ').length;
+
+    score = (questionCount * 20) + (wordCount * 2);
+    score = Math.min(score, 100);
+
+    const isComplex = score > 40;
+    console.log(`[ToT] Step 1: Complexity Gate. Query: "${query.substring(0, 30)}...". Score: ${score}, Decision: ${isComplex ? 'COMPLEX' : 'SIMPLE'}`);
+    return { isComplex, score };
 }
 
 async function generatePlans(query, requestContext) {
@@ -23,7 +54,7 @@ async function generatePlans(query, requestContext) {
     const llmService = llmProvider === 'ollama' ? ollamaService : geminiService;
 
     const modelContext = require('../protocols/contextProtocols').createModelContext({ availableTools });
-    
+
     let currentModeInstruction = "";
     let enforcedTool = null;
 
@@ -47,33 +78,45 @@ async function generatePlans(query, requestContext) {
         `;
     }
 
+    const branchCount = requestContext.branchCount || 2;
     const plannerPrompt = PLANNER_PROMPT_TEMPLATE
         .replace("{userQuery}", query)
         .replace("{available_tools_json}", JSON.stringify(modelContext.available_tools, null, 2))
-        .replace("{current_mode_tool_instruction}", currentModeInstruction);
+        .replace("{current_mode_tool_instruction}", currentModeInstruction)
+        .replace("4-5 unique plans", `${branchCount} unique plans`)
+        .replace("4-5 distinct", `${branchCount} distinct`);
 
     try {
-        const responseText = await llmService.generateContentWithHistory(
-            [], plannerPrompt, "You are a meticulous AI planning agent.", llmOptions
+        const responseText = await callWithFailover(
+            llmService,
+            [],
+            plannerPrompt,
+            "You are a meticulous AI planning agent.",
+            { ...llmOptions, provider: llmProvider },
+            requestContext
         );
         const jsonMatch = responseText.match(/```(json)?\s*([\s\S]+?)\s*```/);
         const jsonString = jsonMatch ? jsonMatch[2] : responseText;
         const parsedResponse = JSON.parse(jsonString);
 
         if (parsedResponse.plans && Array.isArray(parsedResponse.plans) && parsedResponse.plans.length > 0) {
-            parsedResponse.plans.forEach(plan => {
+            // User requirement: Reduce bot branches to 2-3 effective ones
+            const maxBranches = requestContext.branchCount || 2;
+            const optimizedPlans = parsedResponse.plans.slice(0, maxBranches);
+
+            optimizedPlans.forEach(plan => {
                 if (plan.steps && Array.isArray(plan.steps)) {
                     plan.steps = plan.steps.map(step => {
                         if (typeof step === 'string') {
                             step = { description: step, tool_call: null };
                         }
-                        
+
                         if (enforcedTool) {
                             return {
                                 description: step.description,
                                 tool_call: {
                                     tool_name: enforcedTool,
-                                    parameters: { query: step.description } 
+                                    parameters: { query: step.description }
                                 }
                             };
                         }
@@ -88,13 +131,13 @@ async function generatePlans(query, requestContext) {
                     });
                 }
             });
-            console.log(`[ToT] Planner: Successfully generated and validated ${parsedResponse.plans.length} plans.`);
-            return parsedResponse.plans;
+            console.log(`[ToT] Planner: Successfully generated and validated ${optimizedPlans.length} plans (Dynamic scaling applied).`);
+            return optimizedPlans;
         }
     } catch (error) {
         console.error(`[ToT] Planner: LLM call failed or returned invalid JSON. Error: ${error.message}. Falling back to default plan.`);
         // Ensure fallback plan also matches the new step object format, applying enforcement if needed
-        const defaultToolCall = enforcedTool ? 
+        const defaultToolCall = enforcedTool ?
             { tool_name: enforcedTool, parameters: { query: query } } : null; // Apply enforcement to fallback too
         return [{
             name: "Default Direct Answer Plan",
@@ -118,8 +161,13 @@ async function evaluatePlans(plans, query, requestContext) {
     const evaluatorPrompt = EVALUATOR_PROMPT_TEMPLATE.replace("{userQuery}", query).replace("{plansJsonString}", plansJsonString);
 
     try {
-        const responseText = await llmService.generateContentWithHistory(
-            [], evaluatorPrompt, "You are an evaluating agent.", llmOptions
+        const responseText = await callWithFailover(
+            llmService,
+            [],
+            evaluatorPrompt,
+            "You are an evaluating agent.",
+            { ...llmOptions, provider: llmProvider },
+            requestContext
         );
         const jsonMatch = responseText.match(/```(json)?\s*([\s\S]+?)\s*```/);
         const jsonString = jsonMatch ? jsonMatch[2] : responseText;
@@ -135,133 +183,145 @@ async function evaluatePlans(plans, query, requestContext) {
     } catch (error) {
         console.error(`[ToT] Evaluator: LLM call failed or returned invalid JSON. Error: ${error.message}. Falling back to first plan.`);
     }
-    
+
     console.log(`[ToT] Evaluator: Fallback selected. Winning plan: "${plans[0].name}"`);
     return plans[0];
 }
 
-
-
 async function executePlan(winningPlan, originalQuery, requestContext, streamCallback) {
-    console.log('[ToT] Step 4: Executor. Starting execution of plan...');
-    let collectedContexts = [];
-    let cumulativeContext = ""; 
+    const collectedContexts = [];
+    let cumulativeContext = "";
+    const reasoningSteps = [];
     const uniqueReferences = new Map();
 
-    for (let i = 0; i < winningPlan.steps.length; i++) {
-        const step = winningPlan.steps[i]; // 'step' is now an object { description, tool_call }
-        const stepDescription = step.description;
-        const stepToolCall = step.tool_call; // This will be null for direct answers or an object for tools
+    const completedTaskIds = new Set();
+    const taskResults = new Map(); // id -> result content
 
-        let agentResponse; // This will hold the result of the tool execution or direct answer
+    // Dependency-aware execution loop
+    let allFinished = false;
+    let iterations = 0;
+    const MAX_ITERATIONS = winningPlan.tasks.length * 2; // Safeguard
 
-        // --- MODIFICATION START: Direct Tool Execution Logic ---
-        if (stepToolCall && stepToolCall.tool_name) {
-            // This step requires a specific tool as decided by the Planner
-            const toolName = stepToolCall.tool_name;
-            const toolParams = stepToolCall.parameters;
+    while (!allFinished && iterations < MAX_ITERATIONS) {
+        iterations++;
+        allFinished = true;
 
-            const tool = availableTools[toolName]; // Access from the availableTools import
-            if (!tool) {
-                console.error(`[ToT Executor] Planner specified unknown tool: ${toolName}. Falling back to direct answer.`);
-                // Fallback if Planner hallucinated a tool
-                agentResponse = {
-                    finalAnswer: `I attempted to use a tool called '${toolName}' but it doesn't exist. Please try again or refine your query.`,
-                    thinking: null,
-                    references: [],
-                    sourcePipeline: `tot-error-unknown-tool`
-                };
-            } else {
-                try {
-                    console.log(`[ToT Executor] Executing Planner-selected tool: ${toolName} with params:`, toolParams);
-                    // Dynamically execute the tool, passing necessary context
-                    const toolResult = await tool.execute(toolParams, requestContext); 
-                    
-                    // Format tool output for 'finalAnswer' and 'thinking' fields in agentResponse structure
-                    agentResponse = {
-                        finalAnswer: toolResult.toolOutput || `No specific output from ${toolName}.`,
-                        thinking: `Successfully executed tool: ${toolName}.`,
-                        references: toolResult.references || [],
-                        sourcePipeline: `tot-planner-${toolName}`
-                    };
+        for (const task of winningPlan.tasks) {
+            if (completedTaskIds.has(task.id)) continue;
 
-                } catch (toolError) {
-                    console.error(`[ToT Executor] Error executing Planner-selected tool '${toolName}':`, toolError);
-                    agentResponse = {
-                        finalAnswer: `I attempted to use the '${toolName}' tool as planned, but it failed. Error: ${toolError.message}.`,
-                        thinking: null,
-                        references: [],
-                        sourcePipeline: `tot-error-tool-failed`
-                    };
+            // Check if all dependencies are met
+            const depsMet = task.depends_on.every(depId => completedTaskIds.has(depId));
+            if (!depsMet) {
+                allFinished = false;
+                continue;
+            }
+
+            // Execute this task
+            console.log(`[Hierarchical Executor] Starting Task ${task.id}: ${task.description}`);
+
+            // Enrich context with results from dependencies
+            let taskContext = cumulativeContext;
+            if (task.depends_on.length > 0) {
+                const depContext = task.depends_on
+                    .map(depId => `[Result of ${depId}]: ${taskResults.get(depId)}`)
+                    .join('\n\n');
+                taskContext = `${depContext}\n\nExisting Overall Context:\n${cumulativeContext}`;
+            }
+
+            let taskCompleted = false;
+            let turnCount = 0;
+            const MAX_TURNS_PER_TASK = 3; // Increased turn limit for deeper orchestration (1.4.2)
+
+            while (!taskCompleted && turnCount < MAX_TURNS_PER_TASK) {
+                turnCount++;
+
+                // 1. Generate Thought + Action
+                const reactStep = await cotService.generateReActStep(
+                    task.description,
+                    taskContext || originalQuery,
+                    availableTools,
+                    {
+                        llmProvider: requestContext.llmProvider,
+                        llmOptions: {
+                            model: requestContext.llmProvider === 'ollama' ? requestContext.ollamaModel : requestContext.geminiModel,
+                            apiKey: requestContext.apiKey,
+                            ollamaUrl: requestContext.ollamaUrl,
+                            provider: requestContext.llmProvider
+                        }
+                    }
+                );
+
+                // 2. Log and stream the Thought
+                const thoughtContent = `**Task ${task.id} (Turn ${turnCount}):**\n*Thought:* ${reactStep.thought}\n\n`;
+                streamCallback({ type: 'thought', content: thoughtContent });
+
+                reasoningSteps.push({
+                    task_id: task.id,
+                    turn: turnCount,
+                    ...reactStep
+                });
+
+                // 3. Handle Action
+                if (reactStep.action && reactStep.action !== 'none' && availableTools[reactStep.action]) {
+                    const toolName = reactStep.action;
+                    const toolParams = reactStep.action_input || {};
+                    const tool = availableTools[toolName];
+
+                    streamCallback({
+                        type: 'thought',
+                        content: `> [!TIP]\n> *Action: Using ${toolName} to research: "${toolParams.query || 'details'}"...*\n\n`
+                    });
+
+                    try {
+                        const toolResult = await tool.execute(toolParams, requestContext);
+                        const observation = `Observation from ${toolName}: ${toolResult.toolOutput}`;
+
+                        if (toolResult.references) {
+                            toolResult.references.forEach(ref => {
+                                const key = ref.url || ref.source;
+                                if (key && !uniqueReferences.has(key)) uniqueReferences.set(key, ref);
+                            });
+                        }
+
+                        taskContext += `\n[Turn ${turnCount}] ${observation}\n`;
+                        streamCallback({ type: 'thought', content: `*Observation:* ${toolResult.toolOutput.substring(0, 150)}...\n\n` });
+                    } catch (toolError) {
+                        console.error(`[Hierarchical Executor] Tool ${toolName} failed:`, toolError);
+                        // 1.4.2 Improvement: Don't give up immediately, let the LLM see the error and try another turn or conclude
+                        taskContext += `\n[Turn ${turnCount}] !! TOOL ERROR (${toolName}): ${toolError.message} !! Please attempt an alternative approach or finalize with available data.\n`;
+                    }
+                } else {
+                    const finalContent = reactStep.final_answer || "Task completed.";
+                    taskResults.set(task.id, finalContent);
+                    collectedContexts.push(`### ${task.description}\n${finalContent}`);
+                    cumulativeContext += `\n[${task.id} Final]: ${finalContent}\n`;
+                    completedTaskIds.add(task.id);
+                    taskCompleted = true;
                 }
             }
-        } else {
-            // This step is a 'direct_answer' as decided by the Planner (tool_call is null)
-            console.log(`[ToT Executor] Performing direct answer for step: "${stepDescription}"`);
-            
-            // Use a simplified direct answer approach, as agentService does for 'forceSimple'
-            // Need the LLM Service and options from requestContext
-            const llmService = requestContext.llmProvider === 'ollama' ? ollamaService : geminiService;
-            const llmOptions = { 
-                model: requestContext.ollamaModel, 
-                apiKey: requestContext.apiKey, 
-                ollamaUrl: requestContext.ollamaUrl 
-            };
 
-            const directAnswerText = await llmService.generateContentWithHistory(
-                [], // No history here, each step is self-contained for execution
-                stepDescription, // The prompt for this step
-                CHAT_MAIN_SYSTEM_PROMPT(), // Use the main system prompt for direct answers
-                llmOptions
-            );
-            
-            const thinkingMatch = directAnswerText.match(/<thinking>([\s\S]*?)<\/thinking>/i);
-            const thinking = thinkingMatch ? thinkingMatch[1].trim() : null;
-            const mainContent = thinking ? directAnswerText.replace(/<thinking>[\s\S]*?<\/thinking>\s*/i, "").trim() : directAnswerText;
+            // Check for pruning between tasks
+            if (totPruningService.shouldPruneBranch({ confidence_score: reasoningSteps[reasoningSteps.length - 1]?.confidence_score }, completedTaskIds.size - 1, winningPlan.tasks.length)) {
+                streamCallback({ type: 'thought', content: `> [!NOTE]\n> *Optimization: Branch pruning triggered. Skipping remaining tasks.*\n\n` });
+                allFinished = true;
+                break;
+            }
 
-            agentResponse = {
-                finalAnswer: mainContent,
-                thinking: thinking,
-                references: [],
-                sourcePipeline: `tot-planner-direct-answer`
-            };
-        }
-        // --- MODIFICATION END ---
-
-        const monologue = agentResponse.thinking || `The step was executed, but no detailed thinking was provided.`;
-        const thoughtContent = `**Step ${i + 1}/${winningPlan.steps.length}: ${stepDescription}**\n*Thinking:* ${monologue}\n\n`;
-        streamCallback({ type: 'thought', content: thoughtContent });
-        
-        console.log(`[ToT] Executor: Step ${i+1} completed.`);
-        
-        const stepResult = `--- Context from Step ${i + 1} (${agentResponse.sourcePipeline}) ---\n${agentResponse.finalAnswer}`;
-        collectedContexts.push(stepResult);
-
-        cumulativeContext += stepResult + "\n\n";
-
-        // Add new, unique references to our map. Using URL as the key for de-duplication.
-        if (agentResponse.references && agentResponse.references.length > 0) {
-            agentResponse.references.forEach(ref => {
-                if (ref.url && !uniqueReferences.has(ref.url)) {
-                    uniqueReferences.set(ref.url, ref);
-                } else if (!ref.url && ref.source && !uniqueReferences.has(ref.source)) {
-                    // Fallback to source text for de-duplication if URL is missing
-                    uniqueReferences.set(ref.source, ref);
-                }
-            });
+            allFinished = false; // We just completed one, maybe others are now unblocked
         }
     }
-    
+
     const allReferences = Array.from(uniqueReferences.values()).map((ref, index) => ({
         ...ref,
         number: index + 1
     }));
-    
-    console.log(`[ToT] Step 4: Executor. All steps executed. Collected ${allReferences.length} de-duplicated references.`);
-    
+
+    console.log(`[ToT] Step 4: Executor. All tasks executed. Collected ${allReferences.length} de-duplicated references.`);
+
     return {
         finalContext: collectedContexts.join('\n\n'),
-        allReferences: allReferences
+        allReferences: allReferences,
+        reasoningSteps: reasoningSteps
     };
 }
 
@@ -276,10 +336,25 @@ async function synthesizeFinalAnswer(originalQuery, finalContext, chatHistory, r
 
     const finalSystemPrompt = CHAT_MAIN_SYSTEM_PROMPT();
 
-    const finalAnswer = await llmService.generateContentWithHistory(
-        chatHistory, synthesizerUserQuery, finalSystemPrompt, llmOptions
-    );
-    return finalAnswer;
+    try {
+        const finalAnswer = await callWithFailover(
+            llmService,
+            chatHistory,
+            synthesizerUserQuery,
+            finalSystemPrompt,
+            { ...llmOptions, provider: llmProvider },
+            requestContext
+        );
+        return finalAnswer;
+    } catch (error) {
+        console.error(`[ToT] Synthesizer: Final LLM call failed completely. Error: ${error.message}`);
+        // RESILIENCE: If synthesis fails, return the gathered context directly so the user doesn't lose data.
+        return `> [!WARNING]
+> **AI Synthesis Failed**: I successfully gathered research data but encountered an issue generating a summary (likely due to API quota limits and local service being unavailable). 
+> 
+> **Here is the raw gathered information for your query:**
+\n\n${finalContext}`;
+    }
 }
 
 async function processQueryWithToT_Streaming(query, chatHistory, requestContext, streamCallback) {
@@ -289,12 +364,15 @@ async function processQueryWithToT_Streaming(query, chatHistory, requestContext,
         allThoughts.push(content);
     };
 
-    const isComplex = await isQueryComplex(query,requestContext);
+    const { isComplex, score } = await isQueryComplex(query, requestContext);
+
+    // Add branchCount to requestContext for dynamic branching
+    requestContext.branchCount = totPruningService.getRecommendedBranchCount(score);
 
     if (!isComplex) {
         // Step 1: Stream the initial classification thought. This gives immediate feedback.
         streamAndStoreThought(`**Analyzing Query**\nQuery is simple. No need of Complex thinking process my Love 😊.\n\n`);
-        
+
         // Step 2: Get the direct response. This now includes the LLM's own thinking process.
         const directResponse = await processAgenticRequest(
             query,
@@ -313,25 +391,25 @@ async function processQueryWithToT_Streaming(query, chatHistory, requestContext,
         // Step 4: The final object is now built from all thoughts that were streamed.
         const finalThoughts = allThoughts.join(''); // Join without extra separators, as they are in the content.
 
-        return { 
-            finalAnswer: directResponse.finalAnswer, 
-            thoughts: finalThoughts, 
-            references: directResponse.references, 
-            sourcePipeline: directResponse.sourcePipeline 
+        return {
+            finalAnswer: directResponse.finalAnswer,
+            thoughts: finalThoughts,
+            references: directResponse.references,
+            sourcePipeline: directResponse.sourcePipeline
         };
     }
 
 
     streamAndStoreThought("**Starting Complex Reasoning**\nQuery detected as complex. Initiating multi-step thought process.\n\n**Hang on, We are doing our best to give the best outcome**\n\n\n");
-    
+
     const plans = await generatePlans(query, requestContext);
     streamAndStoreThought(`**Planning Stage**\nGenerated ${plans.length} potential plans. Now evaluating the best approach.\n\n`);
-    
+
     const winningPlan = await evaluatePlans(plans, query, requestContext);
     streamAndStoreThought(`**Evaluation Stage**\nBest plan selected: "${winningPlan.name}". Beginning execution.\n\n`);
 
-    const { finalContext, allReferences } = await executePlan(winningPlan, query, requestContext, streamCallback);
-    
+    const { finalContext, allReferences, reasoningSteps } = await executePlan(winningPlan, query, requestContext, streamCallback);
+
     streamAndStoreThought("**Synthesizing Final Answer**\nAll information has been gathered. Compiling the final, comprehensive response.\n\n");
 
     const finalAnswerWithThinking = await synthesizeFinalAnswer(query, finalContext, chatHistory, requestContext);
@@ -342,16 +420,17 @@ async function processQueryWithToT_Streaming(query, chatHistory, requestContext,
 
     allThoughts.push(thinking);
     const finalThoughts = allThoughts.filter(Boolean).join('');
-    
+
     console.log('--- ToT Streaming Orchestration Finished ---');
     return {
         finalAnswer,
         thoughts: finalThoughts,
+        reasoning_steps: reasoningSteps, // Added for Advanced CoT visualization
         references: allReferences,
         sourcePipeline: `tot-${requestContext.llmProvider}`
     };
 }
 
-module.exports = {  
+module.exports = {
     processQueryWithToT_Streaming
 };

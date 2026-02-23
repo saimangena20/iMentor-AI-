@@ -47,6 +47,7 @@ const feedbackRoutes = require('./routes/feedback');
 const finetuningRoutes = require('./routes/finetuning');
 const gamificationRoutes = require('./routes/gamification');
 const knowledgeStateRoutes = require('./routes/knowledgeState');
+const deepResearchRoutes = require('./routes/deepResearch');
 const { setupAdmin } = require('./scripts/setupAdmin');
 
 // --- Cron Jobs ---
@@ -117,6 +118,7 @@ app.use("/api/knowledge-sources", authMiddleware, knowledgeSourceRoutes);
 app.use('/api/feedback', authMiddleware, feedbackRoutes);
 app.use('/api/gamification', authMiddleware, gamificationRoutes);
 app.use('/api/knowledge-state', authMiddleware, knowledgeStateRoutes);
+app.use('/api/deep-research', authMiddleware, deepResearchRoutes);
 
 // --- SENTRY ERROR HANDLER ---
 Sentry.setupExpressErrorHandler(app);

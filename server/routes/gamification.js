@@ -3,6 +3,11 @@ const router = express.Router();
 const Bounty = require('../models/Bounty');
 const UserScore = require('../models/UserScore'); // Used for leaderboard
 const { createChallenge, generateQuizChallenge, evaluateQuiz, gradeOpenAnswer, evaluateSessionChallenge, generateDiagnosticQuiz, evaluateDiagnosticQuiz, createGame, getGames, deleteGame } = require('../services/gamificationService');
+const {
+    generateLevels,
+    generateLevelQuestions,
+    updateLevelProgress
+} = require('../services/skillTreeGameService');
 const User = require('../models/User'); // Used to populate user details in leaderboard
 const TestResult = require('../models/TestResult');
 const { auditLog } = require('../utils/logger');
@@ -264,8 +269,53 @@ router.delete('/skill-tree/games/:gameId', async (req, res) => {
         const result = await deleteGame(req.user._id, req.params.gameId);
         res.json(result);
     } catch (error) {
-        console.error('Error deleting skill tree game:', error);
+        console.error("Error deleting skill tree game:", error);
         res.status(500).json({ message: 'Server error deleting game.' });
+    }
+});
+
+// --- Skill Tree Game Map Routes ---
+
+// @route   POST /api/gamification/skill-tree/generate-levels
+// @desc    Generate personalized levels for a skill tree
+router.post('/skill-tree/generate-levels', async (req, res) => {
+    const { topic, assessmentResult, answers } = req.body;
+    try {
+        const levels = await generateLevels(req.user._id, topic, assessmentResult, answers);
+        res.json({ levels });
+    } catch (error) {
+        console.error('[GamificationRoutes] Error generating levels:', error);
+        res.status(500).json({ message: 'Failed to generate levels.' });
+    }
+});
+
+// @route   POST /api/gamification/skill-tree/level-questions
+// @desc    Generate questions for a specific level
+router.post('/skill-tree/level-questions', async (req, res) => {
+    const { topic, levelName, difficulty } = req.body;
+    try {
+        const questions = await generateLevelQuestions(topic, levelName, difficulty);
+        res.json({ questions });
+    } catch (error) {
+        console.error('[GamificationRoutes] Error generating level questions:', error);
+        res.status(500).json({ message: 'Failed to generate questions.' });
+    }
+});
+
+// @route   PATCH /api/gamification/skill-tree/games/:gameId/levels/:levelId
+// @desc    Update progress for a specific level in a game
+router.patch('/skill-tree/games/:gameId/levels/:levelId', async (req, res) => {
+    try {
+        const result = await updateLevelProgress(
+            req.user._id,
+            req.params.gameId,
+            req.params.levelId,
+            req.body
+        );
+        res.json(result);
+    } catch (error) {
+        console.error('[GamificationRoutes] Error updating level progress:', error);
+        res.status(500).json({ message: 'Failed to update progress.' });
     }
 });
 

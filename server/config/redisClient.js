@@ -1,9 +1,7 @@
 // server/config/redisClient.js
 const { createClient } = require('redis');
-const
- 
-dotenv = require('dotenv');
-dotenv.config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) {

@@ -17,6 +17,7 @@ const { auditLog } = require('../utils/logger');
 const { selectLLM } = require('../services/llmRouterService');
 const LLMPerformanceLog = require('../models/LLMPerformanceLog');
 const { processTutorResponse, getTutorSessionState, setTutorSessionState, clearTutorSessionState, startSocraticSession, SOCRATIC_STATES, getTopicContext } = require('../services/socraticTutorService');
+const contextManager = require('../services/contextManager');
 
 // Gamification imports
 const gamificationService = require('../services/gamificationService');
@@ -134,7 +135,7 @@ router.post('/message', injectContextualMemory, async (req, res) => {
 
         const historyFromDb = chatSession ? chatSession.messages : [];
         const chatContext = { userId, subject: documentContextName, chatHistory: historyFromDb, user: user };
-        const { chosenModel, logic: routerLogic } = await selectLLM(query.trim(), chatContext);
+        const { chosenModel, logic: routerLogic, queryCategory, isABTest } = await selectLLM(query.trim(), chatContext);
         const llmConfig = {
             llmProvider: chosenModel.provider,
             geminiModel: chosenModel.provider === 'gemini' ? chosenModel.modelId : null,
@@ -166,6 +167,9 @@ router.post('/message', injectContextualMemory, async (req, res) => {
             isAcademicSearchEnabled: !!useAcademicSearch,
             ...llmConfig
         };
+
+        // --- Milestone 1.5.2: Context Window Management ---
+        const managedHistory = await contextManager.manageContext(historyForLlm, requestContext);
 
         let agentResponse;
 
@@ -365,7 +369,7 @@ router.post('/message', injectContextualMemory, async (req, res) => {
                 streamEvent(res, eventData);
             };
 
-            const totResult = await processQueryWithToT_Streaming(query.trim(), historyForLlm, requestContext, interceptingStreamCallback);
+            const totResult = await processQueryWithToT_Streaming(query.trim(), managedHistory, requestContext, interceptingStreamCallback);
             const endTime = Date.now();
             const cues = await generateCues(totResult.finalAnswer, llmConfig);
 
@@ -379,6 +383,8 @@ router.post('/message', injectContextualMemory, async (req, res) => {
                 response: agentResponse.finalAnswer, // <-- THIS IS THE NEW LINE
                 chosenModelId: chosenModel.modelId,
                 routerLogic: routerLogic,
+                queryCategory: queryCategory,
+                isABTest: isABTest,
                 responseTimeMs: endTime - startTime
             });
             await logEntry.save();
@@ -483,7 +489,7 @@ router.post('/message', injectContextualMemory, async (req, res) => {
         } else {
             // --- Logic for STANDARD JSON response ---
             const startTime = Date.now(); // Moved start time here
-            agentResponse = await processAgenticRequest(query.trim(), historyForLlm, clientProvidedSystemInstruction, requestContext);
+            agentResponse = await processAgenticRequest(query.trim(), managedHistory, clientProvidedSystemInstruction, requestContext);
             const endTime = Date.now();
 
             // --- START MODIFICATION (Non-Streaming Path) ---
@@ -495,6 +501,8 @@ router.post('/message', injectContextualMemory, async (req, res) => {
                 response: agentResponse.finalAnswer, // <-- THIS IS THE NEW LINE
                 chosenModelId: chosenModel.modelId,
                 routerLogic: routerLogic,
+                queryCategory: queryCategory,
+                isABTest: isABTest,
                 responseTimeMs: endTime - startTime
             });
             await logEntry.save();
@@ -521,6 +529,7 @@ router.post('/message', injectContextualMemory, async (req, res) => {
                 parts: [{ text: agentResponse.finalAnswer }],
                 timestamp: new Date(),
                 thinking: agentResponse.thinking || null,
+                reasoning_steps: agentResponse.reasoning_steps || [],
                 references: agentResponse.references || [],
                 source_pipeline: agentResponse.sourcePipeline,
                 action: agentResponse.action || null,
@@ -792,6 +801,7 @@ router.get('/session/:sessionId', async (req, res) => {
             sender: msg.role === 'model' ? 'bot' : 'user',
             text: msg.parts?.[0]?.text || '',
             thinking: msg.thinking,
+            reasoning_steps: msg.reasoning_steps || [],
             references: msg.references,
             timestamp: msg.timestamp,
             source_pipeline: msg.source_pipeline,

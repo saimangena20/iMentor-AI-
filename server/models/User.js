@@ -64,8 +64,8 @@ const UserSchema = new mongoose.Schema({
     default: () => ({}),
   },
   hasCompletedOnboarding: {
-      type: Boolean,
-      default: false
+    type: Boolean,
+    default: false
   },
   apiKeyRequestStatus: {
     type: String,
@@ -78,7 +78,7 @@ const UserSchema = new mongoose.Schema({
   },
   preferredLlmProvider: {
     type: String,
-    enum: ["gemini", "ollama"],
+    enum: ["gemini", "ollama", "openai", "claude", "mistral"],
     default: "gemini",
   },
   ollamaUrl: {
@@ -88,11 +88,11 @@ const UserSchema = new mongoose.Schema({
   },
   ollamaModel: {
     type: String,
-    default: process.env.OLLAMA_DEFAULT_MODEL || "qwen2.5:14b-instruct",
+    default: process.env.OLLAMA_DEFAULT_MODEL || "qwen2.5:3b-instruct",
   },
-  learningPaths: [{ 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'LearningPath' 
+  learningPaths: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'LearningPath'
   }],
   otp: {
     type: String,
@@ -119,21 +119,21 @@ UserSchema.pre("save", async function (next) {
   // This prevents re-encrypting an already encrypted key on other user updates.
   if (this.isModified("encryptedApiKey")) {
     if (this.encryptedApiKey) {
-        try {
-            // We only encrypt if it's not already in the encrypted format (containing ':')
-            if (!this.encryptedApiKey.includes(':')) {
-                this.encryptedApiKey = encrypt(this.encryptedApiKey);
-            }
-        } catch (encError) {
-            console.error("Error encrypting API key during user save:", encError);
-            return next(new Error("Failed to encrypt API key."));
+      try {
+        // We only encrypt if it's not already in the encrypted format (containing ':')
+        if (!this.encryptedApiKey.includes(':')) {
+          this.encryptedApiKey = encrypt(this.encryptedApiKey);
         }
+      } catch (encError) {
+        console.error("Error encrypting API key during user save:", encError);
+        return next(new Error("Failed to encrypt API key."));
+      }
     } else {
-        // If the key is explicitly set to null/empty, ensure it's saved as null.
-        this.encryptedApiKey = null;
+      // If the key is explicitly set to null/empty, ensure it's saved as null.
+      this.encryptedApiKey = null;
     }
   }
-  
+
   next();
 });
 

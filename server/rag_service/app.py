@@ -48,6 +48,12 @@ try:
 
     if config.GEMINI_API_KEY:
         genai.configure(api_key=config.GEMINI_API_KEY)
+        try:
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            logging.getLogger(__name__).info(f"Available Gemini models: {available_models}")
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Could not list available models: {e}")
+        
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -160,6 +166,14 @@ def create_error_response(message, status_code=500, details=None):
     return jsonify(response_payload), status_code
 
 # === API Endpoints ===
+
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "message": "AI Tutor Python RAG Service is running",
+        "health_check": "/health",
+        "metrics": "/metrics"
+    }), 200
 
 # This config is now cleaner. The platform-specific logic is handled in the route.
 LANGUAGE_CONFIG = {
@@ -554,6 +568,20 @@ def academic_search_route():
         return jsonify({"success": True, "results": results}), 200
     except Exception as e:
         return create_error_response(f"Academic search failed: {str(e)}", 500)
+
+
+@app.route('/enhanced_academic_search', methods=['POST'])
+def enhanced_academic_search_route():
+    """Enhanced academic search with PubMed integration via deep_research module."""
+    data = request.get_json()
+    if not data or 'query' not in data: return create_error_response("Missing 'query'", 400)
+    try:
+        from deep_research import enhanced_academic_search
+        results = asyncio.run(enhanced_academic_search(data['query'], max_results_per_api=data.get('max_results', 5)))
+        return jsonify({"success": True, "results": results, "source_count": len(results)}), 200
+    except Exception as e:
+        logger.error(f"Enhanced academic search failed: {e}")
+        return create_error_response(f"Enhanced academic search failed: {str(e)}", 500)
 
 @app.route('/web_search', methods=['POST'])
 def web_search_route():
