@@ -286,6 +286,40 @@ class KnowledgeLayerBridge:
         
         return "\n".join(parts)
 
+    async def get_all_topics(self, subject: str) -> List[CurriculumTopic]:
+        """Fetches all topics for a syllabus subject."""
+        if not self.neo4j_driver: return []
+        cypher = """
+        MATCH (s:Syllabus {name: $subject})-[:HAS_MODULE]->(m:Module)-[:CONTAINS]->(t:Topic)
+        RETURN t.id as topic_id, t.name as name, m.name as module, t.subtopics as subtopics
+        """
+        with self.neo4j_driver.session() as session:
+            result = session.run(cypher, subject=subject)
+            return [CurriculumTopic(topic_id=r["topic_id"], name=r["name"], module=r["module"]) for r in result]
+
+    async def assess_data_alignment(self, subject: str, existing_counts: Dict[str, int]) -> Dict[str, Any]:
+        """
+        Assesses which curriculum topics are under-represented in the training data.
+        """
+        topics = await self.get_all_topics(subject)
+        missing_coverage = []
+        low_coverage = []
+        
+        for topic in topics:
+            count = existing_counts.get(topic.name, 0)
+            if count == 0:
+                missing_coverage.append(topic.name)
+            elif count < 10:
+                low_coverage.append({"topic": topic.name, "count": count})
+                
+        return {
+            "subject": subject,
+            "total_topics": len(topics),
+            "missing_topics": missing_coverage,
+            "low_coverage_topics": low_coverage,
+            "coverage_percentage": (len(topics) - len(missing_coverage)) / len(topics) * 100 if topics else 0
+        }
+
 
 # Factory function
 def create_knowledge_bridge() -> KnowledgeLayerBridge:

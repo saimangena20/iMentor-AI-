@@ -17,6 +17,7 @@ import SyllabusGraphManager from './SyllabusGraphManager.jsx';
 import CurriculumGraphModal from './CurriculumGraphModal.jsx';
 import DatasetManager from './DatasetManager.jsx';
 import GamificationDashboard from './GamificationDashboard.jsx';
+import CourseModelDashboard from './CourseModelDashboard.jsx';
 
 import { UploadCloud, Trash2, Eye, LogOut, Loader2, AlertTriangle, CheckCircle, RefreshCw, Shield, Users, Lightbulb, HelpCircle, Cog, Database, BarChart2, Gamepad2, Network } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -44,6 +45,7 @@ const createMarkup = (markdownText) => {
 // AdminDocumentUpload Component
 function AdminDocumentUpload({ onUploadSuccess }) {
     const [selectedFile, setSelectedFile] = useState(null);
+    const [subject, setSubject] = useState('');
     const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef(null);
     const handleFileChange = (e) => { if (isUploading) return; const file = e.target.files && e.target.files[0]; if (file) setSelectedFile(file); else setSelectedFile(null); };
@@ -53,6 +55,7 @@ function AdminDocumentUpload({ onUploadSuccess }) {
         const toastId = toast.loading(`Uploading "${selectedFile.name}"...`);
         const formData = new FormData();
         formData.append('file', selectedFile);
+        formData.append('subject', subject || 'Uncategorized');
         try {
             const authHeaders = adminApi.getFixedAdminAuthHeaders();
             const response = await adminApi.uploadAdminDocument(formData, authHeaders);
@@ -69,9 +72,19 @@ function AdminDocumentUpload({ onUploadSuccess }) {
     return (
         <div className="card-base p-4">
             <h2 className="text-lg font-semibold mb-3 text-text-light dark:text-text-dark">Upload New Subject Document</h2>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                <input type="file" ref={fileInputRef} onChange={handleFileChange} className="input-field flex-grow text-sm p-2.5 min-h-[44px]" accept=".pdf,.docx,.txt,.md" disabled={isUploading} />
-                <Button onClick={handleUpload} isLoading={isUploading} disabled={!selectedFile || isUploading} leftIcon={<UploadCloud size={16} />} size="md" className="w-full sm:w-auto !py-2.5">Upload</Button>
+            <div className="flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <input type="file" ref={fileInputRef} onChange={handleFileChange} className="input-field flex-grow text-sm p-2.5 min-h-[44px]" accept=".pdf,.docx,.txt,.md" disabled={isUploading} />
+                    <input
+                        type="text"
+                        placeholder="Subject (e.g. AI, Math)"
+                        value={subject}
+                        onChange={(e) => setSubject(e.target.value)}
+                        className="input-field sm:w-48 text-sm p-2.5 min-h-[44px]"
+                        disabled={isUploading}
+                    />
+                    <Button onClick={handleUpload} isLoading={isUploading} disabled={!selectedFile || isUploading} leftIcon={<UploadCloud size={16} />} size="md" className="w-full sm:w-auto !py-2.5">Upload</Button>
+                </div>
             </div>
             {selectedFile && !isUploading && <p className="text-xs mt-2 text-text-muted-light dark:text-text-muted-dark">Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)</p>}
         </div>
@@ -98,7 +111,8 @@ function AdminDashboardPage() {
     const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
     const [isUserChatsModalOpen, setIsUserChatsModalOpen] = useState(false);
     const [isLlmModalOpen, setIsLlmModalOpen] = useState(false);
-    const [isDatasetModalOpen, setIsDatasetModalOpen] = useState(false); // <<< NEW STATE for Dataset Modal
+    const [isCourseModelModalOpen, setIsCourseModelModalOpen] = useState(false);
+    const [isDatasetModalOpen, setIsDatasetModalOpen] = useState(false);
     const [isGamificationModalOpen, setIsGamificationModalOpen] = useState(false); // NEW: Gamification modal
     const [isCurriculumModalOpen, setIsCurriculumModalOpen] = useState(false); // Curriculum Graph modal
     const [showDeleteDocModal, setShowDeleteDocModal] = useState(false);
@@ -224,6 +238,7 @@ function AdminDashboardPage() {
                     <IconButton icon={Gamepad2} onClick={() => setIsGamificationModalOpen(true)} title="Gamification Management" variant="ghost" size="md" className="text-text-muted-light dark:text-text-muted-dark hover:text-primary" />
                     <IconButton icon={Network} onClick={() => setIsCurriculumModalOpen(true)} title="Curriculum Graph" variant="ghost" size="md" className="text-text-muted-light dark:text-text-muted-dark hover:text-emerald-500" />
                     <IconButton icon={Cog} onClick={() => setIsLlmModalOpen(true)} title="LLM Configuration" variant="ghost" size="md" className="text-text-muted-light dark:text-text-muted-dark hover:text-primary" />
+                    <IconButton icon={Activity} onClick={() => setIsCourseModelModalOpen(true)} title="Course Model Registry" variant="ghost" size="md" className="text-text-muted-light dark:text-text-muted-dark hover:text-orange-500" />
                     <Button onClick={adminLogoutHandler} variant="danger" size="sm" leftIcon={<LogOut size={16} />}> Logout Admin </Button>
                 </div>
             </header>
@@ -322,9 +337,11 @@ function AdminDashboardPage() {
             <Modal isOpen={isGamificationModalOpen} onClose={() => setIsGamificationModalOpen(false)} title="Gamification Dashboard" size="5xl">
                 <GamificationDashboard />
             </Modal>
-            {/* Curriculum Graph Modal */}
             <Modal isOpen={isCurriculumModalOpen} onClose={() => setIsCurriculumModalOpen(false)} title="Curriculum Graph" size="5xl">
-                <CurriculumGraphModal />
+                <CurriculumVisualizer />
+            </Modal>
+            <Modal isOpen={isCourseModelModalOpen} onClose={() => setIsCourseModelModalOpen(false)} title="Course-Specific SLM Registry" size="5xl">
+                <CourseModelDashboard />
             </Modal>
             <Modal
                 isOpen={showDeleteDocModal}

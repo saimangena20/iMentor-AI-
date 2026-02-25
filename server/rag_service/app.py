@@ -20,8 +20,11 @@ import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
 from prometheus_flask_exporter import PrometheusMetrics
 
-# import threading
-# import fine_tuner
+import threading
+import fine_tuner
+from data_augmentor import run_augmentation_pipeline
+from knowledge_layer_bridge import create_knowledge_bridge
+import qa_generator
 # --- Add server directory to sys.path ---
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 if SERVER_DIR not in sys.path:
@@ -164,6 +167,9 @@ def create_error_response(message, status_code=500, details=None):
     response_payload = {"error": message}
     if details and status_code != 500: response_payload["details"] = details
     return jsonify(response_payload), status_code
+
+# Register routes from standalone modules
+qa_generator.register_qa_routes(app, llm_wrapper)
 
 # === API Endpoints ===
 
@@ -507,6 +513,38 @@ def health_check():
         status_details["status"], http_status_code = "ok", 200
     
     return jsonify(status_details), http_status_code
+
+@app.route('/finetune', methods=['POST'])
+def finetune_route():
+    """
+    Triggers a background fine-tuning job.
+    Expected JSON:
+    - job_id: unique ID for tracking
+    - dataset_path: local path to the formatted training data
+    - model_tag_to_update: tag to apply to the newly created model
+    """
+    data = request.get_json()
+    if not data:
+        return create_error_response("Request must be JSON", 400)
+    
+    job_id = data.get('job_id')
+    dataset_path = data.get('dataset_path')
+    model_tag = data.get('model_tag_to_update')
+    course_id = data.get('course_id', 'global')
+    
+    if not all([job_id, dataset_path, model_tag]):
+        return create_error_response("Missing job_id, dataset_path, or model_tag_to_update", 400)
+    
+    # Run in background to avoid blocking the main server thread
+    thread = threading.Thread(
+        target=fine_tuner.run_fine_tuning,
+        args=(dataset_path, model_tag, job_id, course_id)
+    )
+    thread.daemon = True
+    thread.start()
+    
+    logger.info(f"Accepted fine-tuning job {job_id} for model {model_tag}. Background thread started.")
+    return jsonify({"message": "Fine-tuning job started in background", "jobId": job_id}), 202
 
 @app.route('/add_document', methods=['POST'])
 def add_document_qdrant():
@@ -1760,6 +1798,53 @@ if __name__ == '__main__':
         except Exception as e:
             logger.error(f"Error in /process_url for URL '{url}': {e}", exc_info=True)
             return create_error_response(f"Failed to process URL: {str(e)}", 500)
+
+# Initialize Knowledge Bridge
+knowledge_bridge = create_knowledge_bridge()
+
+@app.route('/curriculum/alignment', methods=['POST'])
+async def curriculum_alignment_route():
+    data = request.get_json()
+    if not data or 'subject' not in data:
+        return create_error_response("Missing 'subject'", 400)
+    
+    subject = data['subject']
+    existing_counts = data.get('existing_counts', {})
+    
+    try:
+        report = await knowledge_bridge.assess_data_alignment(subject, existing_counts)
+        return jsonify(report), 200
+    except Exception as e:
+        logger.error(f"Alignment check failed: {str(e)}")
+        return create_error_response(str(e), 500)
+
+@app.route('/augment_data', methods=['POST'])
+def augment_data_route():
+    """
+    Applies pedagogical augmentation to provided training data.
+    """
+    data = request.get_json()
+    if not data or 'data' not in data:
+        return create_error_response("Missing 'data' array", 400)
+    
+    input_records = data['data']
+    augmented_results = []
+    
+    logger.info(f"[Augmentor] Processing {len(input_records)} records for augmentation.")
+    
+    for item in input_records:
+        try:
+            # Run augmentation (returns list of variations)
+            variations = run_augmentation_pipeline(item)
+            # Remove original from variations to avoid sending it back if requested
+            augmented_results.extend([v for v in variations if v.get('is_augmented')])
+        except Exception as e:
+            logger.error(f"Augmentation failed for item: {str(e)}")
+            
+    return jsonify({
+        "message": f"Generated {len(augmented_results)} augmented variations.",
+        "augmented_data": augmented_results
+    }), 200
 
     logger.info(f"--- Starting RAG & Knowledge API Service on port {config.API_PORT} ---")
     # Using threaded=False for stability with external processes like ffmpeg/tesseract

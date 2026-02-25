@@ -12,6 +12,14 @@ const LLMPerformanceLogSchema = new mongoose.Schema({
   isABTest: { type: Boolean, default: false },
   responseTimeMs: { type: Number },
   userFeedback: { type: String, enum: ['positive', 'negative', 'none'], default: 'none' },
+  granularFeedback: {
+    accuracy: { type: Number, min: 1, max: 5 },
+    clarity: { type: Number, min: 1, max: 5 },
+    completeness: { type: Number, min: 1, max: 5 },
+    comment: { type: String }
+  },
+  qualityScore: { type: Number, default: 0 },
+  isAmbiguous: { type: Boolean, default: false },
   metadata: { type: Map, of: mongoose.Schema.Types.Mixed }, // For flexible future logging
   createdAt: { type: Date, default: Date.now },
 });

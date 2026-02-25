@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 
 const FineTuningEventSchema = new mongoose.Schema({
   jobId: { type: String, required: true, unique: true },
+  courseId: { type: String }, // Optional: link to a specific course/subject
   status: { type: String, enum: ['started', 'completed', 'failed'], default: 'started' },
   modelTagUpdated: { type: String, required: true },
   datasetPath: { type: String, required: true },

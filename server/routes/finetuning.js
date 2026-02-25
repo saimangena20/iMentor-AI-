@@ -5,6 +5,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const axios = require('axios');
 const LLMPerformanceLog = require('../models/LLMPerformanceLog');
+const FineTuningEvent = require('../models/FineTuningEvent');
+const { v4: uuidv4 } = require('uuid');
 
 // Define the shared directory path. Ensure this is accessible by both Node.js and Python containers.
 const SHARED_DATA_DIR = process.env.SHARED_FINETUNING_DATA_DIR || '/srv/finetuning_data';
@@ -13,69 +15,94 @@ const SHARED_DATA_DIR = process.env.SHARED_FINETUNING_DATA_DIR || '/srv/finetuni
 // @desc    Initiates a model fine-tuning job
 // @access  Admin
 router.post('/start', async (req, res) => {
-    const { modelIdToUpdate } = req.body;
+    const { modelIdToUpdate, courseId } = req.body;
     if (!modelIdToUpdate) {
         return res.status(400).json({ message: 'modelIdToUpdate is required.' });
     }
 
-    console.log(`[Finetune Orchestrator] Received request to start job for model: ${modelIdToUpdate}`);
+    const jobId = uuidv4();
+    console.log(`[Finetune Orchestrator] Starting job ${jobId} for model: ${modelIdToUpdate} (Course: ${courseId || 'Global'})`);
 
     try {
-        // Step 1: Collect all positive feedback logs
-        console.log('[Finetune Orchestrator] Step 1: Fetching positive feedback data from MongoDB...');
-        const positiveFeedbackLogs = await LLMPerformanceLog.find({ userFeedback: 'positive' })
-            .select('query response -_id') // Select only the query and response, exclude the _id
-            .lean(); // Use .lean() for performance with large datasets
-
-        if (positiveFeedbackLogs.length < 10) { // Safety check
-            return res.status(400).json({ message: `Insufficient data for fine-tuning. Need at least 10 positive feedback entries, found ${positiveFeedbackLogs.length}.` });
+        // Step 1: Collect positive feedback logs (Filtered by course if provided)
+        const filter = { userFeedback: 'positive' };
+        if (courseId) {
+            filter.topic = courseId; // Assuming 'topic' stores the course/subject
         }
-        console.log(`[Finetune Orchestrator] Found ${positiveFeedbackLogs.length} positive feedback entries.`);
-        
-        // Step 2: Format the dataset
+
+        const positiveFeedbackLogs = await LLMPerformanceLog.find(filter)
+            .select('query response -_id')
+            .lean();
+
+        if (positiveFeedbackLogs.length < 5) { // Lowered for development testing, usually 10+
+            return res.status(400).json({
+                message: `Insufficient data for fine-tuning. Need at least 5 positive feedback entries, found ${positiveFeedbackLogs.length}.`
+            });
+        }
+
+        // Step 2: Format & Save Dataset
         const dataset = positiveFeedbackLogs.map(log => ({
             instruction: log.query,
             output: log.response
         }));
-        
-        // Step 3: Save the dataset to the shared folder
-        await fs.mkdir(SHARED_DATA_DIR, { recursive: true });
-        const datasetFilename = `finetuning-dataset-${Date.now()}.json`;
-        const datasetPath = path.join(SHARED_DATA_DIR, datasetFilename);
 
-        console.log(`[Finetune Orchestrator] Step 2: Writing formatted dataset to ${datasetPath}`);
+        await fs.mkdir(SHARED_DATA_DIR, { recursive: true });
+        const datasetFilename = `dataset-${jobId}.json`;
+        const datasetPath = path.join(SHARED_DATA_DIR, datasetFilename);
         await fs.writeFile(datasetPath, JSON.stringify(dataset, null, 2));
 
-        // Step 4: Proxy the request to the Python backend
-        const pythonServiceUrl = process.env.PYTHON_RAG_SERVICE_URL;
-        if (!pythonServiceUrl) {
-            throw new Error("Python fine-tuning service URL is not configured.");
-        }
+        // Step 3: Track the Event
+        await FineTuningEvent.create({
+            jobId,
+            courseId,
+            modelTagUpdated: modelIdToUpdate,
+            datasetPath,
+            datasetSize: dataset.length,
+            status: 'started'
+        });
+
+        // Step 4: Trigger Python Service
+        const pythonServiceUrl = process.env.PYTHON_RAG_SERVICE_URL || 'http://localhost:2001';
         const pythonEndpoint = `${pythonServiceUrl}/finetune`;
 
         const pythonPayload = {
-            dataset_path: datasetPath, // Pass the full path within the shared volume
-            model_name_to_update: modelIdToUpdate.replace('ollama/', '') // Python service might not need the 'ollama/' prefix
+            job_id: jobId,
+            dataset_path: datasetPath,
+            model_tag_to_update: modelIdToUpdate.replace('ollama/', ''),
+            course_id: courseId || 'global'
         };
 
-        console.log(`[Finetune Orchestrator] Step 3: Proxying request to Python service at ${pythonEndpoint} with payload:`, pythonPayload);
-        
-        // We use a non-blocking call here. The Python service will run in the background.
-        axios.post(pythonEndpoint, pythonPayload, { timeout: 5000 })
-            .catch(err => {
-                // We log the error but don't fail the user-facing request, as the job is meant to be async.
-                console.error(`[Finetune Orchestrator] Error sending async request to Python fine-tuning service: ${err.message}`);
-            });
+        axios.post(pythonEndpoint, pythonPayload, { timeout: 5000 }).catch(err => {
+            console.error(`[Finetune Orchestrator] Background job trigger failed: ${err.message}`);
+        });
 
-        // Step 5: Respond to the admin immediately
-        res.status(202).json({ 
-            message: `Fine-tuning job accepted. The model '${modelIdToUpdate}' will be updated in the background.`,
+        res.status(202).json({
+            message: `Fine-tuning job ${jobId} accepted.`,
+            jobId,
             datasetSize: dataset.length
         });
 
     } catch (error) {
-        console.error(`[Finetune Orchestrator] An error occurred: ${error.message}`);
-        res.status(500).json({ message: 'Server error during fine-tuning orchestration.' });
+        console.error(`[Finetune Orchestrator] Error: ${error.message}`);
+        res.status(500).json({ message: 'Internal server error.' });
+    }
+});
+
+// @route   POST /api/admin/finetuning/update-status
+// @desc    Callback for Python service to update job status
+router.post('/update-status', async (req, res) => {
+    const { jobId, status, errorMessage } = req.body;
+    try {
+        const updateData = { status };
+        if (status === 'completed') updateData.completedAt = new Date();
+        if (errorMessage) updateData.errorMessage = errorMessage;
+
+        await FineTuningEvent.findOneAndUpdate({ jobId }, updateData);
+        console.log(`[Finetune Orchestrator] Job ${jobId} updated to: ${status}`);
+        res.sendStatus(200);
+    } catch (error) {
+        console.error(`[Finetune Orchestrator] Status update failed: ${error.message}`);
+        res.status(500).send(error.message);
     }
 });
 

@@ -13,6 +13,8 @@ import { getPlainTextFromMarkdown, copyToClipboard } from '../../utils/helpers.j
 import DOMPurify from 'dompurify';
 import { useTypingEffect } from '../../hooks/useTypingEffect.js';
 import api from '../../services/api.js';
+import DetailedFeedbackModal from '../feedback/DetailedFeedbackModal.jsx';
+import { MoreHorizontal } from 'lucide-react';
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -207,10 +209,11 @@ const CriticalThinkingCue = ({ icon: Icon, label, text, color, onClick }) => {
 
 
 
-function MessageBubble({ sender, text, thinking, reasoning_steps, references, timestamp, sourcePipeline, isStreaming, criticalThinkingCues, onCueClick, messageId, logId }) {
+function MessageBubble({ sender, text, thinking, reasoning_steps, references, timestamp, sourcePipeline, isStreaming, criticalThinkingCues, onCueClick, messageId, logId, isABTest }) {
     const isUser = sender === 'user';
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [feedbackSent, setFeedbackSent] = useState(null);
+    const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
     const contentRef = useRef(null);
     const { speak, cancel, isSpeaking } = useTextToSpeech();
 
@@ -229,14 +232,25 @@ function MessageBubble({ sender, text, thinking, reasoning_steps, references, ti
     }, [isStreaming, mainContent]);
 
     const handleFeedback = async (feedbackType) => {
-        if (feedbackSent) return; // Prevent multiple submissions
+        if (feedbackSent) return;
         setFeedbackSent(feedbackType);
         try {
             await api.submitFeedback(logId, feedbackType);
-            toast.success('Thanks for your feedback!');
+            toast.success('Thanks! Would you like to provide more details?');
+            // Auto open detailed feedback after a short delay
+            setTimeout(() => setIsFeedbackModalOpen(true), 600);
         } catch (error) {
             toast.error('Could not submit feedback.');
-            setFeedbackSent(null); // Allow user to try again
+            setFeedbackSent(null);
+        }
+    };
+
+    const handleDetailedFeedback = async (granularData) => {
+        try {
+            await api.submitFeedback(logId, feedbackSent, granularData);
+            toast.success('Detailed feedback submitted. This helps train our models!');
+        } catch (error) {
+            throw error;
         }
     };
 
@@ -292,8 +306,8 @@ function MessageBubble({ sender, text, thinking, reasoning_steps, references, ti
                     <TypingIndicator />
                 ) : (
                     <div className={`message-bubble relative p-3 rounded-2xl shadow-md break-words ${isUser
-                            ? 'bg-surface-light text-text-light border border-border-light dark:bg-primary-dark dark:text-white dark:border-transparent rounded-br-lg'
-                            : 'bg-surface-light dark:bg-surface-dark text-text-light dark:text-text-dark rounded-bl-lg border border-border-light dark:border-border-dark'
+                        ? 'bg-surface-light text-text-light border border-border-light dark:bg-primary-dark dark:text-white dark:border-transparent rounded-br-lg'
+                        : 'bg-surface-light dark:bg-surface-dark text-text-light dark:text-text-dark rounded-bl-lg border border-border-light dark:border-border-dark'
                         }`}>
                         <div ref={contentRef} className="prose prose-sm dark:prose-invert max-w-none message-content leading-relaxed">
                             {parseAndRenderMarkdown(mainContent, messageId)}
@@ -324,12 +338,26 @@ function MessageBubble({ sender, text, thinking, reasoning_steps, references, ti
                                         disabled={!!feedbackSent}
                                         title="Bad response"
                                         size="sm"
-                                        className={`p-1 ${feedbackSent === 'negative' ? 'text-red-500 bg-red-500/10' : 'hover:text-red-500'}`}
+                                        className={`p-1 ${feedbackSent === 'negative' ? 'text-red-500 bg-green-500/10' : 'hover:text-red-500'}`}
                                     />
+                                    {feedbackSent && (
+                                        <IconButton
+                                            icon={MoreHorizontal}
+                                            onClick={() => setIsFeedbackModalOpen(true)}
+                                            title="Modify detailed feedback"
+                                            size="sm"
+                                            className="p-1 hover:text-primary transition-opacity"
+                                        />
+                                    )}
                                 </div>
                             )}
                             <div className="flex items-center gap-2 pl-1 opacity-70">
-                                {!isUser && getPipelineIcon() && <span className="mr-1">{getPipelineIcon()}</span>}
+                                {!isUser && getPipelineIcon() && (
+                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${isABTest ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'bg-primary/10 text-primary-light'}`}>
+                                        {isABTest && <FlaskConical size={10} />}
+                                        {sourcePipeline}
+                                    </span>
+                                )}
                                 <span>{formatTimestamp(timestamp)}</span>
                                 {!isUser && (
                                     <IconButton icon={isSpeaking ? StopCircle : Volume2} onClick={() => isSpeaking ? cancel() : speak({ text: mainContent })} title={isSpeaking ? "Stop reading" : "Read aloud"} size="sm" variant="ghost" className={`p-0.5 ${isSpeaking ? 'text-red-500' : 'text-text-muted-light dark:text-text-muted-dark hover:text-primary'}`} />
@@ -337,6 +365,16 @@ function MessageBubble({ sender, text, thinking, reasoning_steps, references, ti
                             </div>
                         </div>
                     </div>
+                )}
+                {!isStreaming && !isUser && isABTest && !feedbackSent && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-2 p-2 rounded-lg bg-orange-500/5 border border-orange-500/20 text-[10px] text-orange-600 dark:text-orange-400 flex items-center gap-2"
+                    >
+                        <FlaskConical size={12} />
+                        <span>This response is from a <strong>Candidate Model</strong>. Your rating helps decide if it goes to production!</span>
+                    </motion.div>
                 )}
             </div>
 
@@ -414,6 +452,13 @@ function MessageBubble({ sender, text, thinking, reasoning_steps, references, ti
                     </div>
                 </motion.div>
             )}
+
+            <DetailedFeedbackModal
+                isOpen={isFeedbackModalOpen}
+                onClose={() => setIsFeedbackModalOpen(false)}
+                onSubmit={handleDetailedFeedback}
+                logId={logId}
+            />
         </div>
     );
 }

@@ -14,6 +14,8 @@ const LLMConfiguration = require('../models/LLMConfiguration');
 const { encrypt } = require('../utils/crypto');
 const { auditLog } = require('../utils/logger');
 const LLMPerformanceLog = require('../models/LLMPerformanceLog');
+const { generateSyntheticDataForSubject } = require('../services/trainingDataGenerator');
+const CourseModelRegistry = require('../models/CourseModelRegistry');
 
 const router = express.Router();
 
@@ -340,6 +342,7 @@ router.post(
   "/documents/upload",
   adminUpload.single("file"),
   async (req, res) => {
+    const { subject } = req.body;
     if (!req.file) {
       return res
         .status(400)
@@ -372,6 +375,7 @@ router.post(
         filename: serverFilename,
         originalName: originalName,
         text: ragResult.text,
+        subject: subject || 'Uncategorized'
       });
       await adminDocRecord.save();
       await fsPromises.unlink(tempServerPath);
@@ -578,6 +582,65 @@ router.get(
     }
   }
 );
+// @route   POST /api/admin/documents/update-subjects
+// @desc    Batch update subjects for multiple documents
+router.post('/documents/update-subjects', async (req, res) => {
+  const { updates } = req.body; // Expecting [{ filename: '...', subject: '...' }]
+  if (!Array.isArray(updates)) return res.status(400).json({ message: "Updates should be an array." });
+
+  try {
+    const promises = updates.map(u =>
+      AdminDocument.findOneAndUpdate({ filename: u.filename }, { subject: u.subject })
+    );
+    await Promise.all(promises);
+    res.json({ message: "Subjects updated successfully." });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to update subjects." });
+  }
+});
+
+// @route   POST /api/admin/training-data/generate-synthetic
+// @desc    Trigger synthetic Q&A generation for a subject
+router.post('/training-data/generate-synthetic', async (req, res) => {
+  const { subject } = req.body;
+  if (!subject) return res.status(400).json({ message: "Subject is required." });
+
+  try {
+    const result = await generateSyntheticDataForSubject(subject);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: err.message || "Generation failed." });
+  }
+});
+
+// @route   GET /api/admin/course-model-registries
+// @desc    Get all course model registries
+router.get('/course-model-registries', async (req, res) => {
+  try {
+    // 1. Get unique subjects from AdminDocuments to ensure they have a registry
+    const subjects = await AdminDocument.distinct('subject');
+
+    // 2. Ensure each subject has a registry entry
+    const ensurePromises = subjects.filter(s => s && s !== 'Uncategorized').map(async s => {
+      const exists = await CourseModelRegistry.findOne({ subject: s });
+      if (!exists) {
+        return CourseModelRegistry.create({
+          subject: s,
+          activeModelTag: 'ollama/qwen2.5-1.5b-instruct:latest', // Default
+          versions: [{ tag: 'ollama/qwen2.5-1.5b-instruct:latest', status: 'production' }]
+        });
+      }
+    });
+    await Promise.all(ensurePromises);
+
+    // 3. Return all registries
+    const registries = await CourseModelRegistry.find().sort({ subject: 1 });
+    res.json(registries);
+  } catch (err) {
+    console.error(`[Admin] Registry Error: ${err.message}`);
+    res.status(500).json({ message: "Failed to fetch model registries." });
+  }
+});
 
 // --- User & Chat Management Routes ---
 

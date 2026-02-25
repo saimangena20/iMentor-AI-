@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 # Using a lightweight, instruct-tuned base suitable for CPU/Consumer GPU
-BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct" 
-TEMP_MODEL_DIR = "/tmp/ai-tutor-model"
-ADAPTER_DIR = "/tmp/ai-tutor-adapters"
+BASE_MODEL = os.getenv("FINE_TUNING_BASE_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
+TEMP_MODEL_DIR = os.getenv("TEMP_MODEL_DIR", "/tmp/ai-tutor-model")
+ADAPTER_DIR = os.getenv("ADAPTER_DIR", "/tmp/ai-tutor-adapters")
 
 def format_prompts(examples):
     """
@@ -38,7 +38,8 @@ def format_prompts(examples):
     return {"text": texts}
 
 def report_status_to_nodejs(job_id, status, error_message=None):
-    node_server_url = os.getenv("NODE_SERVER_URL_FOR_CALLBACK", "http://localhost:5001")
+    # Retrieve the callback URL from the environment, defaulting to the docker-network or localhost
+    node_server_url = os.getenv("NODE_SERVER_URL", "http://localhost:5001")
     update_url = f"{node_server_url}/api/admin/finetuning/update-status"
     
     payload = {
@@ -48,14 +49,27 @@ def report_status_to_nodejs(job_id, status, error_message=None):
     }
     
     try:
-        requests.post(update_url, json=payload, timeout=5)
-        logger.info(f"Reported status '{status}' for job '{job_id}' to Node.js.")
-    except requests.exceptions.RequestException as e:
+        logging.info(f"Attempting to report status '{status}' for job '{job_id}' to {update_url}")
+        response = requests.post(update_url, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Successfully reported status '{status}' for job '{job_id}'.")
+    except Exception as e:
         logger.error(f"Failed to report status for job '{job_id}': {e}")
 
-def run_fine_tuning(dataset_path: str, model_tag_to_update: str, job_id: str):
+# --- Model Mapping (Task 2.2.1 - Selection Strategy) ---
+SUBJECT_MODEL_MAPPING = {
+    "Math": "Qwen/Qwen2.5-Math-1.5B-Instruct",
+    "Physics": "Qwen/Qwen2.5-Math-1.5B-Instruct",
+    "Computer Science": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+    "Biology": "Qwen/Qwen2.5-1.5B-Instruct",
+    "default": "Qwen/Qwen2.5-1.5B-Instruct"
+}
+
+def run_fine_tuning(dataset_path: str, model_tag_to_update: str, job_id: str, subject: str = "global"):
+    # 0. Select Base Model based on Subject
+    base_model_to_use = SUBJECT_MODEL_MAPPING.get(subject, SUBJECT_MODEL_MAPPING["default"])
     logger.info(f"--- Starting Fine-Tuning Job {job_id} on Py3.12 ---")
-    logger.info(f"Base Model: {BASE_MODEL}")
+    logger.info(f"Subject: {subject} | Selected Base: {base_model_to_use} | Dataset: {dataset_path}")
 
     try:
         # 1. Load Dataset
@@ -63,51 +77,52 @@ def run_fine_tuning(dataset_path: str, model_tag_to_update: str, job_id: str):
         dataset = load_dataset("json", data_files={"train": dataset_path}, split="train")
         dataset = dataset.map(format_prompts, batched=True)
 
-        # 2. Config & Tokenizer
+        # 2. Configure Quantization (Task 2.2.2 - PEFT Optimization)
+        logger.info("Step 2/6: Configuring 4-bit Quantization...")
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32
         )
-        
-        tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
-        tokenizer.pad_token = tokenizer.eos_token
 
-        # 3. Load Base Model (QLoRA)
-        logger.info("Step 2/6: Loading model with QLoRA config...")
+        # 3. Load Model and Tokenizer
+        logger.info("Step 3/6: Loading Base Model...")
+        tokenizer = AutoTokenizer.from_pretrained(base_model_to_use)
+        tokenizer.pad_token = tokenizer.eos_token
+        
         model = AutoModelForCausalLM.from_pretrained(
-            BASE_MODEL,
+            base_model_to_use,
             quantization_config=bnb_config,
             device_map="auto",
             trust_remote_code=True
         )
 
-        # 4. Attach Adapters (LoRA)
+        # 4. Prepare for LoRA
+        logger.info("Step 4/6: Configuring LoRA Adapters...")
         peft_config = LoraConfig(
-            lora_alpha=16,
-            lora_dropout=0.1,
-            r=16,
+            r=16, # Rank
+            lora_alpha=32,
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"], # Specific to Qwen/Llama architectures
+            lora_dropout=0.05,
             bias="none",
-            task_type="CAUSAL_LM",
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"]
+            task_type="CAUSAL_LM"
         )
         model = get_peft_model(model, peft_config)
 
-        # 5. Train
-        logger.info("Step 3/6: Training...")
+        # 5. Training Arguments
+        logger.info("Step 5/6: Setting Training Arguments...")
         training_args = TrainingArguments(
-            output_dir=ADAPTER_DIR,
-            num_train_epochs=3,
-            per_device_train_batch_size=2,
+            output_dir=TEMP_MODEL_DIR,
+            per_device_train_batch_size=1,
             gradient_accumulation_steps=4,
-            optim="paged_adamw_32bit",
-            logging_steps=5,
             learning_rate=2e-4,
-            fp16=True,
-            max_grad_norm=0.3,
-            warmup_ratio=0.03,
-            group_by_length=True,
-            save_strategy="no"
+            num_train_epochs=3,
+            logging_steps=10,
+            save_strategy="no", # Save manually at the end
+            fp16=not torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False,
+            bf16=torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False,
+            report_to="none"
         )
 
         trainer = SFTTrainer(
@@ -118,7 +133,10 @@ def run_fine_tuning(dataset_path: str, model_tag_to_update: str, job_id: str):
             tokenizer=tokenizer,
             args=training_args,
         )
-        
+
+        # 6. Run Training
+        report_status_to_nodejs(job_id, "in_progress")
+        logger.info("Step 6/6: Running Fine-tuning...")
         trainer.train()
         
         # 6. Merge & Save for Ollama (Simplification: Saving Adapters)
@@ -142,7 +160,7 @@ def run_fine_tuning(dataset_path: str, model_tag_to_update: str, job_id: str):
         # Create a simple Modelfile that layers on top of the base
         # Note: Real LoRA support in Ollama uses the ADAPTERS directly.
         modelfile_content = f"""
-FROM {BASE_MODEL}
+FROM {base_model_to_use}
 # In a real setup, you would point to the GGUF of the adapter here
 # ADAPTER {ADAPTER_DIR}/adapter_model.bin
 SYSTEM You are a helpful AI Tutor.

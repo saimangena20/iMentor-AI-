@@ -132,8 +132,14 @@ export const deleteCourseGraph = (courseName) => makeAdminApiRequest('delete', `
 export const getCurriculumVisualization = (courseName) => makeAdminApiRequest('get', `/course/${encodeURIComponent(courseName)}/visualization`);
 
 
+// --- Course-Specific SLM API Functions ---
+export const generateSyntheticData = (subject) => makeAdminApiRequest('post', '/training-data/generate-synthetic', { subject });
+export const getCourseModelRegistries = () => makeAdminApiRequest('get', '/course-model-registries');
+
 export const startFineTuningJob = (payload) => {
     // This function is now using the robust makeAdminApiRequest helper.
     // The endpoint is relative to /api/admin, so we just need /finetuning/start
     return makeAdminApiRequest('post', '/finetuning/start', payload);
 };
+
+export const auditCurriculumAlignment = (subject) => makeAdminApiRequest('post', '/curriculum/audit-sync', { subject });

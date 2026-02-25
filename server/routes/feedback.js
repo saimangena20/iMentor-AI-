@@ -8,22 +8,27 @@ const LLMPerformanceLog = require('../models/LLMPerformanceLog');
 // @access  Private (authMiddleware is applied in server.js)
 router.post('/:logId', async (req, res) => {
     const { logId } = req.params;
-    const { feedback } = req.body; // 'positive' or 'negative'
+    const { feedback, granular } = req.body; // 'positive' or 'negative' and optional granular object
     const userId = req.user._id;
-
-    if (!['positive', 'negative'].includes(feedback)) {
-        return res.status(400).json({ message: 'Invalid feedback value.' });
-    }
 
     try {
         const logEntry = await LLMPerformanceLog.findById(logId);
 
-        // Security check: Ensure the log belongs to the user submitting feedback
+        // Security check
         if (!logEntry || logEntry.userId.toString() !== userId.toString()) {
             return res.status(404).json({ message: 'Log entry not found or access denied.' });
         }
 
-        logEntry.userFeedback = feedback;
+        if (feedback) logEntry.userFeedback = feedback;
+
+        if (granular) {
+            logEntry.granularFeedback = granular;
+            // Quality Score Calculation: Weighted average
+            // Accuracy is weighted slightly higher (40%) than clarity and completeness (30% each)
+            const score = (granular.accuracy * 0.4) + (granular.clarity * 0.3) + (granular.completeness * 0.3);
+            logEntry.qualityScore = score;
+        }
+
         await logEntry.save();
 
         res.status(200).json({ message: 'Thank you for your feedback!' });

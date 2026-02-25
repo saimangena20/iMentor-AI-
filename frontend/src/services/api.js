@@ -370,8 +370,8 @@ const api = {
 
     return { success: true, filename }; // Return success status for the toast
   },
-  submitFeedback: async (logId, feedback) => {
-    const response = await apiClient.post(`/feedback/${logId}`, { feedback });
+  submitFeedback: async (logId, feedback, granular = null) => {
+    const response = await apiClient.post(`/feedback/${logId}`, { feedback, granular });
     return response.data;
   },
 

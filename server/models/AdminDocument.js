@@ -11,6 +11,10 @@ const AdminDocumentSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  subject: { // The course or subject this document belongs to
+    type: String,
+    index: true,
+  },
   text: { // Extracted text content from the document, ready for analysis input
     type: String,
     default: "",
